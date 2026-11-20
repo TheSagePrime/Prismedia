@@ -111,6 +111,34 @@ public sealed class SecurityHeadersTests : IDisposable {
         Assert.Null(Header(response, SecurityHeaders.ContentSecurityPolicyHeader));
     }
 
+    [Theory]
+    [InlineData("previews/clip.mp4", "video/mp4")]
+    [InlineData("audio/track.mp3", "audio/mpeg")]
+    public async Task MediaCacheAssetsAreNotSandboxedSoDirectPlaybackWorks(string relativePath, string expectedType) {
+        await WriteCacheAssetAsync(relativePath, [0x00, 0x01]);
+        using var factory = CreateFactory();
+        using var client = factory.CreateAuthenticatedClient();
+
+        using var response = await client.GetAsync($"/assets/{relativePath}");
+
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(expectedType, response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(SecurityHeaders.NoSniff, Header(response, SecurityHeaders.ContentTypeOptionsHeader));
+        Assert.Null(Header(response, SecurityHeaders.ContentSecurityPolicyHeader));
+    }
+
+    [Theory]
+    [InlineData("text/html", true)]
+    [InlineData("application/xml", true)]
+    [InlineData("image/svg+xml; charset=utf-8", true)]
+    [InlineData("application/octet-stream", true)]
+    [InlineData(null, true)]
+    [InlineData("application/pdf", false)]
+    [InlineData("video/mp4", false)]
+    [InlineData("audio/flac", false)]
+    public void FileLockdownCoversEveryPotentiallyActiveType(string? contentType, bool expected) =>
+        Assert.Equal(expected, SecurityHeaders.ShouldLockDownFileContent(contentType));
+
     [Fact]
     public async Task EveryResponseCarriesBaselineHeaders() {
         using var factory = CreateFactory();
@@ -198,6 +226,20 @@ public sealed class SecurityHeadersTests : IDisposable {
     }
 
     [Fact]
+    public async Task TrustedProxyThrottlesSignInsPerForwardedClient() {
+        using var factory = CreateFactory(remoteIp: "10.0.0.5", trustedProxies: "10.0.0.5");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        HttpStatusCode last = HttpStatusCode.OK;
+        for (var attempt = 0; attempt < 20 && last != HttpStatusCode.TooManyRequests; attempt++) {
+            last = await LoginStatusAsync(client, "203.0.113.1", $"wrong-{attempt}");
+        }
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, last);
+        Assert.Equal(HttpStatusCode.OK, await LoginStatusAsync(client, "203.0.113.2", TestAuth.Password));
+    }
+
+    [Fact]
     public void InvalidTrustedProxyEntryFailsLoudly() {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { [TrustedProxies.EnvironmentKey] = "not-an-ip" })
@@ -236,6 +278,15 @@ public sealed class SecurityHeadersTests : IDisposable {
         response.EnsureSuccessStatusCode();
         return Assert.Single(response.Headers.GetValues("Set-Cookie"), value =>
             value.StartsWith($"{PrismediaAuthentication.SessionCookieName}=", StringComparison.Ordinal));
+    }
+
+    private static async Task<HttpStatusCode> LoginStatusAsync(HttpClient client, string forwardedFor, string password) {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login") {
+            Content = JsonContent.Create(new LoginRequest(TestAuth.Username, password))
+        };
+        request.Headers.Add("X-Forwarded-For", forwardedFor);
+        using var response = await client.SendAsync(request);
+        return response.StatusCode;
     }
 
     private static string? Header(HttpResponseMessage response, string name) =>

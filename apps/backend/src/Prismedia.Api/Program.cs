@@ -156,7 +156,9 @@ app.UseStaticFiles(new StaticFileOptions {
         context.Context.Response.Headers.CacheControl = immutable
             ? "private, max-age=31536000, immutable"
             : "private, max-age=86400";
-        SecurityHeaders.ApplyFileContentPolicy(context.Context.Response);
+        if (SecurityHeaders.ShouldLockDownFileContent(context.Context.Response.ContentType)) {
+            SecurityHeaders.ApplyFileContentPolicy(context.Context.Response);
+        }
     },
 });
 

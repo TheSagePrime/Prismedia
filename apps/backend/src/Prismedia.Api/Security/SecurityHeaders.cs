@@ -43,6 +43,9 @@ internal static partial class SecurityHeaders {
 
     private const string CastFrameworkScriptSource = "https://www.gstatic.com/cast/sdk/libs/";
 
+    private const string AudioTypePrefix = "audio/";
+    private const string VideoTypePrefix = "video/";
+
     private const string CastChromeScriptSource = "https://www.gstatic.com/eureka/clank/";
 
     /// <summary>
@@ -69,12 +72,17 @@ internal static partial class SecurityHeaders {
 
     /// <summary>
     /// Whether a file response of <paramref name="contentType"/> should carry the sandbox
-    /// lockdown policy. PDFs are excluded because browsers refuse to run their built-in PDF
-    /// viewer inside a sandboxed document; every other type is either inert as a document
-    /// (images, media, archives) or potentially active (SVG, HTML, XML) and must be locked.
+    /// lockdown policy. PDFs, audio and video are excluded: they cannot run script as a
+    /// top-level document, and browsers refuse to run their built-in PDF viewer or media
+    /// player inside a sandboxed (opaque-origin) document. Every other type is either inert
+    /// (raster images, archives) or potentially active (SVG, HTML, XML, unknown) and is locked.
     /// </summary>
-    internal static bool ShouldLockDownFileContent(string? contentType) =>
-        !string.Equals(MediaTypeOf(contentType), MediaContentTypes.Pdf, StringComparison.OrdinalIgnoreCase);
+    internal static bool ShouldLockDownFileContent(string? contentType) {
+        var mediaType = MediaTypeOf(contentType);
+        return !(string.Equals(mediaType, MediaContentTypes.Pdf, StringComparison.OrdinalIgnoreCase) ||
+            mediaType.StartsWith(AudioTypePrefix, StringComparison.OrdinalIgnoreCase) ||
+            mediaType.StartsWith(VideoTypePrefix, StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>
     /// Builds the SPA shell Content-Security-Policy for the given built <c>index.html</c>.
