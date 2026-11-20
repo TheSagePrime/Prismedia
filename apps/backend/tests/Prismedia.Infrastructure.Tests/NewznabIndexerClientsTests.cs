@@ -70,6 +70,37 @@ public sealed class NewznabIndexerClientsTests {
         new(Guid.NewGuid(), IndexerKind.Torznab, "https://tracker.example", "key", [7000, 5000, 8000]);
 
     [Fact]
+    public async Task FeedsWithADoctypeStillParse() {
+        var feed = TorznabFeed.Replace(
+            "<rss version",
+            "<!DOCTYPE rss [<!ENTITY unused \"value\">]>\n<rss version");
+        var client = new TorznabIndexerClient(new HttpClient(new CannedHandler(uri => uri.Contains("t=caps") ? Caps : feed)));
+
+        var releases = await client.SearchAsync(Connection(), new IndexerQuery("book", [7000], EntityKind.Book), CancellationToken.None);
+
+        Assert.Equal("My.Book.2024.Retail.EPUB-GRP", Assert.Single(releases).Title);
+    }
+
+    [Fact]
+    public async Task FeedsNeverExpandDocumentTypeEntities() {
+        var feed = TorznabFeed
+            .Replace("<rss version", "<!DOCTYPE rss [<!ENTITY injected \"EXPANDED\">]>\n<rss version")
+            .Replace("<title>My.Book.2024.Retail.EPUB-GRP</title>", "<title>&injected;</title>");
+        var client = new TorznabIndexerClient(new HttpClient(new CannedHandler(uri => uri.Contains("t=caps") ? Caps : feed)));
+
+        IReadOnlyList<string> titles;
+        try {
+            titles = (await client.SearchAsync(Connection(), new IndexerQuery("book", [7000], EntityKind.Book), CancellationToken.None))
+                .Select(release => release.Title)
+                .ToArray();
+        } catch (InvalidOperationException) {
+            titles = [];
+        }
+
+        Assert.DoesNotContain(titles, title => title.Contains("EXPANDED", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task TorznabItemsMapAttributesAndTheTorrentProtocol() {
         var client = new TorznabIndexerClient(new HttpClient(new CannedHandler(uri => uri.Contains("t=caps") ? Caps : TorznabFeed)));
 

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Xml;
 using System.Xml.Linq;
 using Prismedia.Application.Acquisition;
 using Prismedia.Domain.Entities;
@@ -261,7 +262,14 @@ public abstract class NewznabIndexerClientBase(HttpClient http) : IIndexerSearch
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         XDocument document;
         try {
-            document = XDocument.Parse(body);
+            // Indexer feeds are untrusted: skip any DOCTYPE so entities are never defined or expanded,
+            // and never resolve external resources.
+            var settings = new XmlReaderSettings {
+                DtdProcessing = DtdProcessing.Ignore,
+                XmlResolver = null,
+            };
+            using var reader = XmlReader.Create(new StringReader(body), settings);
+            document = XDocument.Load(reader);
         } catch (System.Xml.XmlException) {
             var text = body.Trim();
             throw new InvalidOperationException(text.Length is > 0 and <= 200 ? text : "The indexer returned an unreadable (non-XML) response.");
