@@ -1,4 +1,5 @@
 import * as CFI from './epubcfi.js'
+import { sanitizeBookDocument, documentParseType } from './sanitize.js'
 
 const NS = {
     CONTAINER: 'urn:oasis:names:tc:opendocument:xmlns:container',
@@ -765,6 +766,8 @@ class Loader {
         const { href, mediaType } = item
 
         const isScript = MIME.JS.test(item.mediaType)
+        // Prismedia: book-supplied scripts are never loaded.
+        if (isScript) return null
         const detail = { type: mediaType, isScript, allow: true}
         const event = new CustomEvent('load', { detail })
         this.eventTarget.dispatchEvent(event)
@@ -774,10 +777,14 @@ class Loader {
         const parent = parents.at(-1)
         if (this.#cache.has(href)) return this.ref(href, parent)
 
+        const isCircular = parents.some(p => p === href)
+        // Prismedia: a self-referencing document must never fall through to the raw
+        // (unsanitized) blob path below.
+        if (isCircular && documentParseType(mediaType) !== null) return null
         const shouldReplace =
-            (isScript || [MIME.XHTML, MIME.HTML, MIME.CSS, MIME.SVG].includes(mediaType))
+            (mediaType === MIME.CSS || documentParseType(mediaType) !== null)
             // prevent circular references
-            && parents.every(p => p !== href)
+            && !isCircular
         if (shouldReplace) return this.loadReplaced(item, parents)
         // NOTE: this can be replaced with `Promise.try()`
         const tryLoadBlob = Promise.resolve().then(() => this.loadBlob(href))
@@ -811,18 +818,24 @@ class Loader {
         // or text that just happen to be paths
 
         // parse and replace in HTML
-        if ([MIME.XHTML, MIME.HTML, MIME.SVG].includes(mediaType)) {
-            let doc = new DOMParser().parseFromString(str, mediaType)
+        // Prismedia: every type a frame would render as a document (any HTML/XHTML/SVG/XML
+        // spelling, with or without parameters) is parsed and sanitized here.
+        const parseType = documentParseType(mediaType)
+        if (parseType) {
+            if (parseType !== mediaType && parseType !== MIME.XML) item.mediaType = parseType
+            let doc = new DOMParser().parseFromString(str, parseType)
             // change to HTML if it's not valid XHTML
-            if (mediaType === MIME.XHTML && (doc.querySelector('parsererror')
+            if (parseType === MIME.XHTML && (doc.querySelector('parsererror')
             || !doc.documentElement?.namespaceURI)) {
                 console.warn(doc.querySelector('parsererror')?.innerText ?? 'Invalid XHTML')
                 item.mediaType = MIME.HTML
                 doc = new DOMParser().parseFromString(str, item.mediaType)
             }
+            // Prismedia: strip script vectors before any resource is resolved or serialized.
+            sanitizeBookDocument(doc)
             // replace hrefs in XML processing instructions
             // this is mainly for SVGs that use xml-stylesheet
-            if ([MIME.XHTML, MIME.SVG].includes(item.mediaType)) {
+            if (parseType === MIME.XML || [MIME.XHTML, MIME.SVG].includes(item.mediaType)) {
                 let child = doc.firstChild
                 while (child instanceof ProcessingInstruction) {
                     if (child.data) {
@@ -858,7 +871,7 @@ class Loader {
             for (const el of doc.querySelectorAll('[style]'))
                 el.setAttribute('style',
                     await this.replaceCSS(el.getAttribute('style'), href, parents))
-            // TODO: replace inline scripts? probably not worth the trouble
+            // Prismedia: inline scripts and handlers were removed by sanitizeBookDocument.
             const result = new XMLSerializer().serializeToString(doc)
             return this.createURL(href, result, item.mediaType, parent)
         }

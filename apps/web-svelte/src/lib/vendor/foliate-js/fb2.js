@@ -1,3 +1,4 @@
+import { sanitizeBookTree } from './sanitize.js'
 const normalizeWhitespace = str => str ? str
     .replace(/[\t\n\f\r ]+/g, ' ')
     .replace(/^[\t\n\f\r ]+/, '')
@@ -304,7 +305,8 @@ export const makeFB2 = async blob => {
             return { ids, el: body, linear: 'no' }
         }))
         .map(({ ids, titles, el, linear }) => {
-            const str = template(el.outerHTML)
+            // Prismedia: strip script vectors (e.g. script-scheme links) before serializing.
+            const str = template(sanitizeBookTree(el).outerHTML)
             const blob = new Blob([str], { type: MIME.XHTML })
             const url = URL.createObjectURL(blob)
             urls.push(url)
