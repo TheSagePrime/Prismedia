@@ -49,7 +49,6 @@ public sealed class ImageThumbnailGenerator(
             var entry = archive.GetEntry(memberPath);
             if (entry is null) return false;
 
-            await using (var entryStream = entry.Open())
             await using (var output = new FileStream(
                              tempPath,
                              FileMode.CreateNew,
@@ -57,7 +56,7 @@ public sealed class ImageThumbnailGenerator(
                              FileShare.None,
                              bufferSize: 81920,
                              FileOptions.Asynchronous | FileOptions.SequentialScan)) {
-                await entryStream.CopyToAsync(output, cancellationToken);
+                await ArchiveEntryReader.CopyBoundedAsync(entry, output, cancellationToken);
             }
 
             return await GenerateFileAsync(tempPath, outputPath, maxWidth, jpegQuality, cancellationToken);
