@@ -106,6 +106,7 @@ public sealed class FilesService(
         var name = CleanSegment(request.Name);
         var relativePath = CombineRelative(NormalizeRelativePath(request.ParentPath), name);
         var target = await ResolveAsync(request.RootId, relativePath, hideNsfw, cancellationToken);
+        EnsureWritable(target.Root);
         await EnsureVisiblePathAsync(target, hideNsfw, cancellationToken);
         await storage.CreateDirectoryAsync(target, cancellationToken);
         return new FileOperationResponse(await QueueChangedScansAsync(
@@ -135,6 +136,7 @@ public sealed class FilesService(
                 CombineRelative(targetPath, relativeItemPath),
                 hideNsfw,
                 cancellationToken);
+            EnsureWritable(destination.Root);
             await EnsureVisiblePathAsync(destination, hideNsfw, cancellationToken);
             root = destination.Root;
             await storage.WriteFileAsync(destination, item.Content, cancellationToken);
@@ -152,6 +154,8 @@ public sealed class FilesService(
         bool hideNsfw,
         CancellationToken cancellationToken) {
         var source = await ResolveAsync(request.RootId, request.Path, hideNsfw, cancellationToken);
+        EnsureWritable(source.Root);
+        EnsureNotRoot(source, "Library roots cannot be renamed from Files.");
         await EnsureVisiblePathAsync(source, hideNsfw, cancellationToken);
         var parent = Path.GetDirectoryName(source.RelativePath)?.Replace('\\', '/') ?? string.Empty;
         var target = await ResolveAsync(
@@ -171,8 +175,12 @@ public sealed class FilesService(
         bool hideNsfw,
         CancellationToken cancellationToken) {
         var source = await ResolveAsync(request.SourceRootId, request.SourcePath, hideNsfw, cancellationToken);
+        EnsureWritable(source.Root);
+        EnsureNotRoot(source, "Library roots cannot be moved from Files.");
         await EnsureVisiblePathAsync(source, hideNsfw, cancellationToken);
         var target = await ResolveAsync(request.TargetRootId, request.TargetPath, hideNsfw, cancellationToken);
+        EnsureWritable(target.Root);
+        EnsureNotRoot(target, "A library root cannot be replaced by a move.");
         await EnsureVisiblePathAsync(target, hideNsfw, cancellationToken);
         await MoveResolvedAsync(source, target, cancellationToken);
         if (source.Root.Id == target.Root.Id) {
@@ -196,6 +204,8 @@ public sealed class FilesService(
         }
 
         var target = await ResolveAsync(request.RootId, request.Path, hideNsfw, cancellationToken);
+        EnsureWritable(target.Root);
+        EnsureNotRoot(target, "Deleting a library root from Files is not supported.");
         await EnsureVisiblePathAsync(target, hideNsfw, cancellationToken);
         var executed = await sourcePathMutations.ExecuteAsync(
             target.AbsolutePath,
@@ -218,6 +228,7 @@ public sealed class FilesService(
         }
 
         var target = await ResolveAsync(request.RootId, request.Path, hideNsfw, cancellationToken);
+        EnsureNotRoot(target, "Library roots cannot be excluded from Files.");
         await EnsureVisiblePathAsync(target, hideNsfw, cancellationToken);
         var detail = await storage.GetDetailAsync(target, [], cancellationToken);
         if (target.Root.IsReadOnly)
@@ -312,6 +323,30 @@ public sealed class FilesService(
         var cleaned = string.Concat(value.Select(character =>
             Path.GetInvalidFileNameChars().Contains(character) ? '_' : character)).Trim();
         return string.IsNullOrWhiteSpace(cleaned) ? "files" : cleaned;
+    }
+
+    /// <summary>
+    /// Rejects filesystem writes against an externally managed (read-only) library root before any
+    /// disk effect. The infrastructure mutation guard enforces the same boundary at write time.
+    /// </summary>
+    private static void EnsureWritable(FileLibraryRoot root) {
+        if (root.IsReadOnly) {
+            throw new FileOperationException(
+                ApiProblemCodes.ReadOnlyLibrary,
+                "This library is externally managed. Prismedia keeps its files read-only.");
+        }
+    }
+
+    /// <summary>
+    /// Rejects operations whose normalized target is the library root itself (for example a path of
+    /// "/", "." or "a/.."), which must never be deleted, moved, renamed, or replaced from Files.
+    /// </summary>
+    private static void EnsureNotRoot(ResolvedFilePath path, string message) {
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path.Root.Path));
+        var target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path.AbsolutePath));
+        if (FileSystemPathComparison.Equals(root, target)) {
+            throw new FileOperationException(ApiProblemCodes.InvalidPath, message);
+        }
     }
 
     private static FileConflictException SourceLifecycleConflict(string relativePath) =>
