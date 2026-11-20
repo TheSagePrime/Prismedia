@@ -100,6 +100,14 @@ builder.Services.AddHostedService<TranscodeReaperService>();
 
 var app = builder.Build();
 
+var staticIndexPath = resolvedStaticWebRoot is not null
+    ? Path.Combine(resolvedStaticWebRoot, "index.html")
+    : Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
+var spaShellPolicy = SecurityHeaders.TryBuildSpaShellPolicy(staticIndexPath);
+
+// Forwarded headers must be applied first so scheme/remote IP are correct for everything below.
+app.UsePrismediaTrustedProxies(app.Configuration);
+app.UsePrismediaSecurityHeaders();
 app.UseResponseCompression();
 app.UseMiddleware<Prismedia.Api.Diagnostics.RequestTimingMiddleware>();
 app.UseMiddleware<Prismedia.Api.Diagnostics.FulfillmentOwnershipMiddleware>();
@@ -119,19 +127,23 @@ if (staticFileProvider is not null) {
     app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = staticFileProvider });
     app.UseStaticFiles(new StaticFileOptions {
         FileProvider = staticFileProvider,
-        OnPrepareResponse = PrepareWebStaticResponse
+        OnPrepareResponse = context => PrepareWebStaticResponse(context, spaShellPolicy)
     });
 } else {
     app.UseDefaultFiles();
     app.UseStaticFiles(new StaticFileOptions {
-        OnPrepareResponse = PrepareWebStaticResponse
+        OnPrepareResponse = context => PrepareWebStaticResponse(context, spaShellPolicy)
     });
 }
+
+// Cache assets (artwork, thumbnails, previews, subtitles) are per-library content, so they
+// are mounted behind the same authentication as /api and are never shared-cacheable.
+app.UsePrismediaApiAuthentication();
 
 Directory.CreateDirectory(cacheDir);
 app.UseStaticFiles(new StaticFileOptions {
     FileProvider = new PhysicalFileProvider(cacheDir),
-    RequestPath = "/assets",
+    RequestPath = PrismediaAuthentication.AssetsPrefix,
     ServeUnknownFileTypes = false,
     OnPrepareResponse = context => {
         // Downloaded artwork filenames embed a content hash (plugins) or upload timestamp
@@ -142,19 +154,14 @@ app.UseStaticFiles(new StaticFileOptions {
         var immutable = path.Contains("/plugins/artwork/", StringComparison.OrdinalIgnoreCase) ||
             path.Contains("/custom/artwork/", StringComparison.OrdinalIgnoreCase);
         context.Context.Response.Headers.CacheControl = immutable
-            ? "public, max-age=31536000, immutable"
-            : "public, max-age=86400";
+            ? "private, max-age=31536000, immutable"
+            : "private, max-age=86400";
+        SecurityHeaders.ApplyFileContentPolicy(context.Context.Response);
     },
 });
 
-app.UsePrismediaApiAuthentication();
-
-var staticIndexPath = resolvedStaticWebRoot is not null
-    ? Path.Combine(resolvedStaticWebRoot, "index.html")
-    : Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
-
 if (File.Exists(staticIndexPath)) {
-    app.UseStaticSpaFallback(staticIndexPath);
+    app.UseStaticSpaFallback(staticIndexPath, spaShellPolicy);
 }
 
 app.MapPrismediaEndpoints();
@@ -168,7 +175,7 @@ if (File.Exists(staticIndexPath)) {
             return;
         }
 
-        SetSpaShellCacheHeaders(context.Response);
+        StaticSpaFallback.SetSpaShellHeaders(context.Response, spaShellPolicy);
         context.Response.ContentType = MediaContentTypes.Html;
         await context.Response.SendFileAsync(staticIndexPath, context.RequestAborted);
     });
@@ -206,26 +213,17 @@ static string ResolvePath(string path, string basePath) =>
         ? path
         : Path.Combine(basePath, path));
 
-static void PrepareWebStaticResponse(StaticFileResponseContext context) {
+static void PrepareWebStaticResponse(StaticFileResponseContext context, string? spaShellPolicy) {
     var requestPath = context.Context.Request.Path.Value ?? string.Empty;
     if (string.Equals(context.File.Name, "index.html", StringComparison.OrdinalIgnoreCase) ||
         requestPath.EndsWith(".html", StringComparison.OrdinalIgnoreCase)) {
-        SetSpaShellCacheHeaders(context.Context.Response);
+        StaticSpaFallback.SetSpaShellHeaders(context.Context.Response, spaShellPolicy);
         return;
     }
 
     if (requestPath.StartsWith("/_app/immutable/", StringComparison.OrdinalIgnoreCase)) {
         context.Context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
     }
-}
-
-static void SetSpaShellCacheHeaders(HttpResponse response) {
-    // The SPA shell points at content-hashed JS/CSS chunks. It must be revalidated on
-    // every navigation so mobile Safari/PWA sessions don't keep an older app build
-    // after an API/DTO deploy and render new entity payloads as placeholder-only cards.
-    response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
-    response.Headers.Pragma = "no-cache";
-    response.Headers.Expires = "0";
 }
 
 public partial class Program;

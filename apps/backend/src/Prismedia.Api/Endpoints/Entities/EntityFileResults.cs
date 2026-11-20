@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using Microsoft.Net.Http.Headers;
+using Prismedia.Api.Security;
 using Prismedia.Application.Files;
 
 namespace Prismedia.Api.Endpoints;
@@ -34,7 +35,8 @@ internal static class EntityFileResults {
                         fileDownloadName,
                         lastModified: File.GetLastWriteTimeUtc(archivePath),
                         enableRangeProcessing: true),
-                    FileCacheControl);
+                    FileCacheControl,
+                    contentType);
         }
 
         if (Directory.Exists(path)) {
@@ -57,14 +59,27 @@ internal static class EntityFileResults {
                 contentType,
                 fileDownloadName,
                 enableRangeProcessing: true),
-            FileCacheControl);
+            FileCacheControl,
+            contentType);
     }
 
-    /// <summary>Decorates an inner file result with a Cache-Control header.</summary>
-    private sealed class CachedResult(IResult inner, string cacheControl) : IResult {
+    /// <summary>
+    /// Decorates an inner file result with a Cache-Control header and, for content types
+    /// that could be active when opened directly (SVG, HTML, XML, unknown), the sandboxed
+    /// file Content-Security-Policy.
+    /// </summary>
+    private sealed class CachedResult(IResult inner, string cacheControl, string contentType) : IResult {
         public Task ExecuteAsync(HttpContext httpContext) {
             httpContext.Response.Headers.CacheControl = cacheControl;
+            ApplyContentPolicy(httpContext.Response, contentType);
             return inner.ExecuteAsync(httpContext);
+        }
+    }
+
+    private static void ApplyContentPolicy(HttpResponse response, string contentType) {
+        response.Headers[SecurityHeaders.ContentTypeOptionsHeader] = SecurityHeaders.NoSniff;
+        if (SecurityHeaders.ShouldLockDownFileContent(contentType)) {
+            SecurityHeaders.ApplyFileContentPolicy(response);
         }
     }
 
@@ -148,6 +163,7 @@ internal static class EntityFileResults {
         public async Task ExecuteAsync(HttpContext httpContext) {
             try {
                 httpContext.Response.ContentType = contentType;
+                ApplyContentPolicy(httpContext.Response, contentType);
                 httpContext.Response.ContentLength = new FileInfo(path).Length;
                 if (!string.IsNullOrWhiteSpace(fileDownloadName)) {
                     httpContext.Response.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment") {
