@@ -30,18 +30,27 @@ public sealed class RemoteArtworkFetcher {
 
     private static readonly Lazy<HttpClient> SharedClient = new(CreateDefaultHttpClient);
 
+    /// <summary>Default end-to-end deadline for one artwork download, covering headers and body.</summary>
+    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
+
     private readonly HttpClient _http;
     private readonly long _maxBytes;
+    private readonly TimeSpan _timeout;
 
     /// <summary>Creates a fetcher.</summary>
     /// <param name="http">
     /// Optional client for tests or custom hosts. When null, a process-wide guarded client is used.
     /// </param>
     /// <param name="maxBytes">Largest accepted response body.</param>
-    public RemoteArtworkFetcher(HttpClient? http = null, long maxBytes = DefaultMaxBytes) {
+    /// <param name="timeout">
+    /// End-to-end deadline for one download (headers and body); defaults to <see cref="DefaultTimeout"/>.
+    /// </param>
+    public RemoteArtworkFetcher(HttpClient? http = null, long maxBytes = DefaultMaxBytes, TimeSpan? timeout = null) {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
         _http = http ?? SharedClient.Value;
         _maxBytes = maxBytes;
+        _timeout = timeout ?? DefaultTimeout;
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_timeout, TimeSpan.Zero);
     }
 
     /// <summary>Creates the guarded production client used when no client is supplied.</summary>
@@ -62,16 +71,20 @@ public sealed class RemoteArtworkFetcher {
             return null;
         }
 
+        // HttpClient.Timeout stops at the response headers when streaming, so bound the body read too.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_timeout);
+        var token = deadline.Token;
         try {
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
-            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
             if (!response.IsSuccessStatusCode
                 || response.Content.Headers.ContentLength is { } declared && declared > _maxBytes) {
                 return null;
             }
 
-            var bytes = await ReadCappedAsync(response.Content, cancellationToken);
+            var bytes = await ReadCappedAsync(response.Content, token);
             if (bytes is null) {
                 return null;
             }

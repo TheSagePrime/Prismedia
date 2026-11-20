@@ -58,6 +58,17 @@ public sealed class RemoteArtworkFetcherTests {
     }
 
     [Fact]
+    public async Task StalledResponseBodiesHitTheDownloadDeadline() {
+        var fetcher = new RemoteArtworkFetcher(
+            new HttpClient(new StubHandler(_ => new StreamContent(new StalledStream(Png)))),
+            timeout: TimeSpan.FromMilliseconds(200));
+
+        var started = DateTime.UtcNow;
+        Assert.Null(await fetcher.TryFetchAsync("https://images.test/poster.png", CancellationToken.None));
+        Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
     public async Task UnsuccessfulResponsesAreSkipped() {
         var fetcher = new RemoteArtworkFetcher(new HttpClient(new StubHandler(
             _ => new ByteArrayContent(Png),
@@ -93,6 +104,33 @@ public sealed class RemoteArtworkFetcherTests {
     [InlineData(new byte[] { 0xFF, 0xD8 })]
     public void LookalikeContentIsNotRecognized(byte[] header) =>
         Assert.Null(ImageSignature.Detect(header));
+
+    /// <summary>Returns its prefix, then never completes another read until cancelled.</summary>
+    private sealed class StalledStream(byte[] prefix) : Stream {
+        private bool _sentPrefix;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) {
+            if (!_sentPrefix) {
+                _sentPrefix = true;
+                prefix.CopyTo(buffer);
+                return prefix.Length;
+            }
+
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return 0;
+        }
+    }
 
     private sealed class StubHandler(
         Func<HttpRequestMessage, HttpContent> content,

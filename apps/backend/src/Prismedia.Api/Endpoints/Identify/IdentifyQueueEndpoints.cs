@@ -173,12 +173,6 @@ internal static class IdentifyQueueEndpoints {
             SaveIdentifyQueueProposalRequest request,
             IIdentifyQueueService queue,
             CancellationToken cancellationToken) => {
-                if (!RemoteArtworkUrl.AllAllowed([request.Proposal])) {
-                    return Results.BadRequest(new ApiProblem(
-                        ApiProblemCodes.IdentifyQueueProposalInvalid,
-                        "Artwork must be an absolute http or https URL."));
-                }
-
                 try {
                     return Results.Ok(await queue.SaveProposalAsync(entityId, request.Proposal, cancellationToken));
                 } catch (IdentifyTargetNotEligibleException ex) {
