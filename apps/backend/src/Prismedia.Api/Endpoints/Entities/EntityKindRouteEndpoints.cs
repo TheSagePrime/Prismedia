@@ -42,10 +42,11 @@ internal static class EntityKindRouteEndpoints {
         group.MapPatch("/{id:guid}", async (
             Guid id,
             EntityMetadataUpdateRequest request,
+            HttpContext httpContext,
             IEntityMetadataPatchService metadata,
             IEntityReadService entities,
             CancellationToken cancellationToken) =>
-            await EntityDetailEndpoint.PatchEntityAsync(id, kind, request, metadata, entities, cancellationToken))
+            await EntityDetailEndpoint.PatchEntityAsync(id, kind, request, httpContext, metadata, entities, cancellationToken))
             .RequireAdmin()
             .WithName($"{kindOperationName}Patch")
             .WithSummary($"Update {tag} detail.")

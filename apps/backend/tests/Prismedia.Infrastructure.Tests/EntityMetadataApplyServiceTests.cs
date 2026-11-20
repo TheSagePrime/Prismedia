@@ -351,6 +351,32 @@ public sealed class EntityMetadataApplyServiceTests {
     }
 
     [Fact]
+    public async Task ApplyPatchRejectsMemberEditsOfNonCollectionEntities() {
+        await using var db = CreateContext();
+        var entityId = Guid.NewGuid();
+        SeedEntity(db, entityId, EntityKind.Video.ToCode(), "Original title");
+        await db.SaveChangesAsync();
+        var request = new EntityMetadataUpdateRequest(
+            Fields: [MetadataPatchField.Title.ToCode()],
+            Patch: EmptyPatch() with { Title = "Changed" });
+        var memberService = new EntityMetadataApplyService(
+            db,
+            new PluginArtworkServiceOptions(Path.GetTempPath()),
+            currentUser: TestUserContext.MemberAs(Guid.NewGuid()));
+
+        var memberApplied = await memberService.ApplyPatchAsync(entityId, request, CancellationToken.None);
+
+        Assert.False(memberApplied);
+        Assert.Equal("Original title", (await db.Entities.FindAsync([entityId]))!.Title);
+
+        var adminService = new EntityMetadataApplyService(
+            db,
+            new PluginArtworkServiceOptions(Path.GetTempPath()),
+            currentUser: TestUserContext.Admin());
+        Assert.True(await adminService.ApplyPatchAsync(entityId, request, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ApplyPatchHidesSharedCollectionFromNonOwnerMutation() {
         await using var db = CreateContext();
         var collectionId = Guid.NewGuid();
