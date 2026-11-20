@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Mvc;
 using Prismedia.Application.Files;
 using Prismedia.Contracts.Files;
 using Prismedia.Contracts.System;
@@ -5,6 +6,9 @@ using Prismedia.Contracts.System;
 namespace Prismedia.Api.Endpoints;
 
 internal static class FilesUploadEndpoint {
+    /// <summary>Largest Files upload request accepted, sized for large personal video files.</summary>
+    internal const long FilesUploadLimitBytes = 250L * 1024 * 1024 * 1024;
+
     internal static RouteGroupBuilder MapFilesUploadEndpoint(this RouteGroupBuilder group) {
         group.MapPost("/upload", async (
             HttpRequest request,
@@ -41,6 +45,8 @@ internal static class FilesUploadEndpoint {
         })
             .WithName("UploadFiles")
             .WithSummary("Uploads files into a watched-root folder.")
+            .WithMetadata(new RequestFormLimitsAttribute { MultipartBodyLengthLimit = FilesUploadLimitBytes })
+            .WithMetadata(new RequestSizeLimitAttribute(FilesUploadLimitBytes))
             .DisableAntiforgery()
             .Produces<FileOperationResponse>();
 

@@ -6,7 +6,10 @@ CACHE_DIR="/data/cache"
 SECRET_FILE="/data/.prismedia-secret"
 
 # ── Ensure directories exist ──────────────────────────────────────
-mkdir -p "$PGDATA" "$CACHE_DIR" /run/postgresql
+mkdir -p "$PGDATA" "$CACHE_DIR" /data/tmp /run/postgresql
+# Large uploads are buffered to disk while they are received; keep that on the data
+# volume instead of the container filesystem.
+export ASPNETCORE_TEMP="${ASPNETCORE_TEMP:-/data/tmp}"
 chown -R postgres:postgres "$PGDATA" /run/postgresql
 
 # ── Resolve or generate PRISMEDIA_SECRET ────────────────────────────
