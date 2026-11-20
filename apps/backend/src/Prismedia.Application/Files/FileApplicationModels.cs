@@ -143,6 +143,12 @@ public interface IManagedFileStorage {
         ResolvedFilePath path,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Whether the resolved path, after following every filesystem link along it, still lands inside
+    /// its library root. Links that stay inside the root are allowed; links that leave it are not.
+    /// </summary>
+    bool ResolvesInsideRoot(ResolvedFilePath path);
+
     /// <summary>Creates one directory.</summary>
     Task CreateDirectoryAsync(ResolvedFilePath path, CancellationToken cancellationToken);
 

@@ -386,6 +386,126 @@ public sealed class FilesServiceTests : IDisposable {
         }
     }
 
+    [Fact]
+    public async Task ReadsRefuseLinksThatLeaveTheLibraryRoot() {
+        if (OperatingSystem.IsWindows()) {
+            return;
+        }
+
+        var outside = Directory.CreateTempSubdirectory("prismedia-files-outside-");
+        try {
+            await File.WriteAllTextAsync(Path.Combine(outside.FullName, "secret.txt"), "secret");
+            File.CreateSymbolicLink(Path.Combine(_tempRoot.FullName, "file-link.txt"), Path.Combine(outside.FullName, "secret.txt"));
+            Directory.CreateSymbolicLink(Path.Combine(_tempRoot.FullName, "dir-link"), outside.FullName);
+            var service = CreateService();
+            var invalid = Prismedia.Contracts.System.ApiProblemCodes.InvalidPath;
+
+            foreach (var path in new[] { "file-link.txt", "dir-link/secret.txt" }) {
+                var content = await Assert.ThrowsAsync<FileOperationException>(() =>
+                    service.GetContentInfoAsync(new FileDetailRequest(_rootId, path), false, CancellationToken.None));
+                Assert.Equal(invalid, content.Code);
+                var detail = await Assert.ThrowsAsync<FileOperationException>(() =>
+                    service.GetDetailAsync(new FileDetailRequest(_rootId, path), false, CancellationToken.None));
+                Assert.Equal(invalid, detail.Code);
+            }
+
+            var listing = await Assert.ThrowsAsync<FileOperationException>(() =>
+                service.ListChildrenAsync(new FileChildrenRequest(_rootId, "dir-link"), false, CancellationToken.None));
+            Assert.Equal(invalid, listing.Code);
+        } finally {
+            outside.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReadsFollowLinksThatStayInsideTheLibraryRoot() {
+        if (OperatingSystem.IsWindows()) {
+            return;
+        }
+
+        Directory.CreateDirectory(Path.Combine(_tempRoot.FullName, "Real"));
+        await File.WriteAllTextAsync(Path.Combine(_tempRoot.FullName, "Real", "clip.mp4"), "video");
+        File.CreateSymbolicLink(Path.Combine(_tempRoot.FullName, "clip-link.mp4"), Path.Combine(_tempRoot.FullName, "Real", "clip.mp4"));
+        Directory.CreateSymbolicLink(Path.Combine(_tempRoot.FullName, "Alias"), "Real");
+        var service = CreateService();
+
+        var viaFile = await service.GetContentInfoAsync(new FileDetailRequest(_rootId, "clip-link.mp4"), false, CancellationToken.None);
+        var viaDir = await service.GetContentInfoAsync(new FileDetailRequest(_rootId, "Alias/clip.mp4"), false, CancellationToken.None);
+        var listing = await service.ListChildrenAsync(new FileChildrenRequest(_rootId, "Alias"), false, CancellationToken.None);
+
+        Assert.Equal(5, viaFile.SizeBytes);
+        Assert.Equal(5, viaDir.SizeBytes);
+        Assert.Single(listing.Entries);
+    }
+
+    [Fact]
+    public async Task DirectoryDetailStatsDoNotCountFilesBehindOutboundLinks() {
+        if (OperatingSystem.IsWindows()) {
+            return;
+        }
+
+        var outside = Directory.CreateTempSubdirectory("prismedia-files-outside-");
+        try {
+            await File.WriteAllTextAsync(Path.Combine(outside.FullName, "secret.txt"), "secret");
+            Directory.CreateDirectory(Path.Combine(_tempRoot.FullName, "Folder"));
+            await File.WriteAllTextAsync(Path.Combine(_tempRoot.FullName, "Folder", "a.txt"), "a");
+            Directory.CreateSymbolicLink(Path.Combine(_tempRoot.FullName, "Folder", "escape"), outside.FullName);
+            var service = CreateService();
+
+            var detail = await service.GetDetailAsync(new FileDetailRequest(_rootId, "Folder"), false, CancellationToken.None);
+
+            Assert.Equal(1, detail.DirectoryFileCount);
+        } finally {
+            outside.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ArchivePlanSkipsLinksThatLeaveTheLibraryRoot() {
+        if (OperatingSystem.IsWindows()) {
+            return;
+        }
+
+        var outside = Directory.CreateTempSubdirectory("prismedia-files-outside-");
+        try {
+            await File.WriteAllTextAsync(Path.Combine(outside.FullName, "secret.txt"), "secret");
+            var folder = Path.Combine(_tempRoot.FullName, "Folder");
+            Directory.CreateDirectory(Path.Combine(folder, "Real"));
+            await File.WriteAllTextAsync(Path.Combine(folder, "Real", "kept.txt"), "kept");
+            File.CreateSymbolicLink(Path.Combine(folder, "inside-link.txt"), Path.Combine(folder, "Real", "kept.txt"));
+            File.CreateSymbolicLink(Path.Combine(folder, "file-escape.txt"), Path.Combine(outside.FullName, "secret.txt"));
+            Directory.CreateSymbolicLink(Path.Combine(folder, "dir-escape"), outside.FullName);
+            var archives = new RecordingArchives();
+            Archives = archives;
+            var service = CreateService();
+
+            await service.PrepareArchiveAsync(new FileArchiveRequest(_rootId, "Folder"), false, CancellationToken.None);
+
+            var paths = archives.Plan!.Entries.Select(entry => entry.ArchivePath).Order(StringComparer.Ordinal).ToArray();
+            Assert.Equal(["Real", "Real/kept.txt", "inside-link.txt"], paths);
+        } finally {
+            outside.Delete(recursive: true);
+        }
+    }
+
+    private IFileArchivePreparationService? Archives { get; set; }
+
+    private sealed class RecordingArchives : IFileArchivePreparationService {
+        public FileArchivePlan? Plan { get; private set; }
+
+        public FileArchivePreparation Start(FileArchivePlan plan) {
+            Plan = plan;
+            return new FileArchivePreparation(Guid.NewGuid(), plan.FileName, false, 0, 0, plan.Entries.Count, null);
+        }
+
+        public FileArchivePreparation? Get(Guid id) => null;
+
+        public PreparedFileArchive? Claim(Guid id) => null;
+
+        public void Release(PreparedFileArchive archive) {
+        }
+    }
+
     private RecordingFilesPersistence Persistence { get; } = new();
     private RecordingJobQueue Queue { get; } = new();
     private RecordingSourcePathOwnerReader SourceOwners { get; } = new();
@@ -407,7 +527,7 @@ public sealed class FilesServiceTests : IDisposable {
         return new FilesService(
             Persistence,
             new LocalManagedFileStorage(new TestFileMutationGuard()),
-            new FileArchivePreparationService(),
+            Archives ?? (IFileArchivePreparationService)new FileArchivePreparationService(),
             Queue,
             new EntitySourcePathMutationCoordinator(SourceOwners, Lifecycle));
     }

@@ -305,13 +305,19 @@ public sealed class FilesService(
         foreach (var entry in children) {
             cancellationToken.ThrowIfCancellationRequested();
             var absolutePath = AbsolutePathForEntry(directory.Root.Path, entry.Path);
+            var resolved = new ResolvedFilePath(directory.Root, entry.Path, absolutePath);
+            if (!storage.ResolvesInsideRoot(resolved)) {
+                // Links that lead outside the library root are never packed into archives.
+                continue;
+            }
+
             var archivePath = Path.GetRelativePath(archiveRoot.AbsolutePath, absolutePath).Replace('\\', '/');
             var isDirectory = entry.Kind == FileEntryKind.Directory;
             collected.Add(new FileArchiveEntry(absolutePath, archivePath, isDirectory, entry.SizeBytes ?? 0));
             if (isDirectory) {
                 await CollectArchiveEntriesAsync(
                     archiveRoot,
-                    new ResolvedFilePath(directory.Root, entry.Path, absolutePath),
+                    resolved,
                     hideNsfw,
                     collected,
                     cancellationToken);
