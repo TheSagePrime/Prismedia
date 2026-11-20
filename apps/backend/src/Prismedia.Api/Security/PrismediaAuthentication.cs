@@ -23,6 +23,9 @@ internal static class PrismediaAuthentication {
     /// <summary>HttpOnly cookie carrying the web portal's session token.</summary>
     internal const string SessionCookieName = "prismedia-session";
 
+    /// <summary>Request prefix of the generated/downloaded cache asset mount.</summary>
+    internal const string AssetsPrefix = "/assets";
+
     private const string AuthContextKey = "PrismediaAuth";
     private const string SecFetchSiteHeader = "Sec-Fetch-Site";
     private const string CrossSiteFetch = "cross-site";
@@ -132,6 +135,11 @@ internal static class PrismediaAuthentication {
         }
 
         if (IsOpdsRequest(path)) {
+            return true;
+        }
+
+        // Cache assets accept the same cookie/bearer/query token forms as /api.
+        if (path.StartsWithSegments(AssetsPrefix)) {
             return true;
         }
 

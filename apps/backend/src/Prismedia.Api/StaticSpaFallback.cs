@@ -1,4 +1,5 @@
 using Prismedia.Contracts.Media;
+using Prismedia.Api.Security;
 using Prismedia.Contracts.Opds;
 
 namespace Prismedia.Api;
@@ -7,7 +8,10 @@ namespace Prismedia.Api;
 /// Serves the built Svelte shell for browser navigations that are not backend routes or files.
 /// </summary>
 internal static class StaticSpaFallback {
-    internal static IApplicationBuilder UseStaticSpaFallback(this IApplicationBuilder app, string staticIndexPath) =>
+    internal static IApplicationBuilder UseStaticSpaFallback(
+        this IApplicationBuilder app,
+        string staticIndexPath,
+        string? shellPolicy) =>
         app.Use(async (context, next) => {
             if (!ShouldServeSpaShell(context.Request)) {
                 await next();
@@ -15,15 +19,27 @@ internal static class StaticSpaFallback {
             }
 
             context.Response.ContentType = MediaContentTypes.Html;
-            context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
-            context.Response.Headers.Pragma = "no-cache";
-            context.Response.Headers.Expires = "0";
+            SetSpaShellHeaders(context.Response, shellPolicy);
             if (HttpMethods.IsHead(context.Request.Method)) {
                 return;
             }
 
             await context.Response.SendFileAsync(staticIndexPath, context.RequestAborted);
         });
+
+    /// <summary>
+    /// Headers for every SPA shell response: never cached (the shell points at content-hashed
+    /// chunks and must be revalidated on each navigation so PWA sessions pick up new builds),
+    /// plus the shell Content-Security-Policy when one was built from the static index.
+    /// </summary>
+    internal static void SetSpaShellHeaders(HttpResponse response, string? shellPolicy) {
+        response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        response.Headers.Pragma = "no-cache";
+        response.Headers.Expires = "0";
+        if (shellPolicy is not null) {
+            response.Headers[SecurityHeaders.ContentSecurityPolicyHeader] = shellPolicy;
+        }
+    }
 
     internal static bool ShouldServeSpaShell(HttpRequest request) {
         if (!HttpMethods.IsGet(request.Method) && !HttpMethods.IsHead(request.Method)) {

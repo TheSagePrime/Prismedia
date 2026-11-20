@@ -12,7 +12,15 @@ Prismedia already has per-user accounts and does not require Authelia, Authentik
 
 ## Forward standard headers
 
-Forward `Host`, `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` so Prismedia sees the public scheme and host and assigns rate-limit buckets correctly. There is no `PUBLIC_ORIGIN` or base-URL variable; configure the public URL at the proxy.
+Forward `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto`. There is no `PUBLIC_ORIGIN` or base-URL variable; configure the public URL at the proxy.
+
+Prismedia ignores forwarded headers unless the request comes from a proxy you trust. Set `PRISMEDIA_TRUSTED_PROXIES` to a comma-separated list of your proxy's IP addresses or CIDR ranges, as Prismedia sees them (for example the Docker network gateway or the proxy container's address):
+
+```bash
+PRISMEDIA_TRUSTED_PROXIES=172.18.0.1,10.0.0.0/24
+```
+
+With it set, Prismedia uses `X-Forwarded-Proto` to mark the session cookie `Secure` behind a TLS proxy and uses `X-Forwarded-For` to assign sign-in rate-limit buckets per client instead of per proxy. Leave it unset when nothing sits in front of Prismedia. Never list a range that untrusted clients can connect from, because anyone in it could spoof their address and scheme. An invalid entry stops startup with an error.
 
 Preserve request methods, query strings, `Authorization`, `Range`, and response streaming. Video source routes under `/api/playback` use byte ranges, while HLS playlists and segments are streamed as normal API responses.
 
@@ -23,7 +31,7 @@ Interactive SSO redirects work for a browser but not for API clients or OPDS rea
 1. use Prismedia's own login without the extra middleware; or
 2. bypass forward-auth for `/api/*` and `/opds`, allowing Prismedia to authenticate those routes itself.
 
-Bypassing the external middleware does not make protected API routes anonymous. Prismedia still requires its session cookie or bearer token on `/api/*`, except for health and setup/login routes. OPDS still requires Basic Auth.
+Bypassing the external middleware does not make protected API routes anonymous. Prismedia still requires its session cookie or bearer token on `/api/*` and on generated artwork and thumbnails under `/assets/*`, except for health and setup/login routes. OPDS still requires Basic Auth.
 
 ## Authelia
 

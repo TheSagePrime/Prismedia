@@ -20,5 +20,13 @@ Local modifications (re-apply when updating the pinned commit):
   don't use it, `vendor/pdfjs/` was removed and `pdf.js` reduced to a stub that keeps
   `makeBook()`'s dynamic import resolvable.
 
+- `sanitize.js` is a **Prismedia addition**. `epub.js`, `mobi.js` and `fb2.js` call it to
+  strip script elements, event-handler attributes, script-scheme URLs and non-CSS
+  `xml-stylesheet` instructions from section documents before they are serialized to
+  same-origin blob: URLs. `epub.js` also routes every renderable HTML/XHTML/SVG/XML media
+  type (any spelling) through that path, refuses book-supplied script items, and never
+  falls back to an unsanitized blob for self-referencing documents. Look for
+  `// Prismedia:` comments when re-applying.
+
 Dev/build files (`reader.js`, `reader.html`, `tests/`, `rollup/`, config) were not
 vendored. Update by re-copying the runtime modules from a newer pinned commit.

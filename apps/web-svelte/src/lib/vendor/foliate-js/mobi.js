@@ -1,3 +1,4 @@
+import { sanitizeBookDocument, documentParseType, passiveResourceType } from './sanitize.js'
 const unescapeHTML = str => {
     if (!str) return ''
     const textarea = document.createElement('textarea')
@@ -864,6 +865,8 @@ class MOBI6 {
         }`))
 
         await this.replaceResources(doc)
+        // Prismedia: strip script vectors before serializing to a same-origin blob.
+        sanitizeBookDocument(doc)
         const result = this.serializer.serializeToString(doc)
         const url = URL.createObjectURL(new Blob([result], { type: this.#type }))
         this.#cache.set(section, url)
@@ -1093,8 +1096,16 @@ class KF8 {
         this.transformTarget.dispatchEvent(event)
         const newData = await event.detail.data
         const newType = await event.detail.type
-        const doc = newType === MIME.SVG ? this.parser.parseFromString(newData, newType) : null
-        return [new Blob([newData], { newType }),
+        // Prismedia: sanitize document resources and give every blob an explicit, safe type.
+        const parseType = documentParseType(newType)
+        let data = newData
+        let doc = null
+        if (parseType && typeof newData === 'string') {
+            doc = sanitizeBookDocument(this.parser.parseFromString(newData, parseType))
+            data = this.serializer.serializeToString(doc)
+        }
+        if (newType !== MIME.SVG) doc = null
+        return [new Blob([data], { type: parseType ? newType : passiveResourceType(newType) }),
             // SVG wrappers need to be inlined
             // as browsers don't allow external resources when loading SVG as an image
             doc?.getElementsByTagNameNS('http://www.w3.org/2000/svg', 'image')?.length
@@ -1184,6 +1195,8 @@ class KF8 {
             for (const el of doc.querySelectorAll(`img[src="${url}"]`))
                 el.replaceWith(node)
         }
+        // Prismedia: strip script vectors before serializing to a same-origin blob.
+        sanitizeBookDocument(doc)
         const url = URL.createObjectURL(
             new Blob([this.serializer.serializeToString(doc)], { type: this.#type }))
         this.#cache.set(section, url)
