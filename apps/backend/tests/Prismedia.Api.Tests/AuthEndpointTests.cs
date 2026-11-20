@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Prismedia.Application.Security;
 using Prismedia.Infrastructure.Serialization;
 using Prismedia.Contracts.Security;
 using Prismedia.Contracts.System;
@@ -97,6 +99,31 @@ public sealed class AuthEndpointTests {
         using (response) {
             Assert.Equal(HttpStatusCode.TooManyRequests, response!.StatusCode);
         }
+    }
+
+    [Fact]
+    public async Task FailedLoginsSpreadAcrossClientsThrottleTheAccount() {
+        using var factory = CreateFactory();
+        var client = new ClientIdentity("Tests", null, null, null);
+
+        // Each attempt comes from a distinct client bucket, so only the per-account limit applies.
+        for (var i = 0; i < AuthAttemptThrottle.MaxAccountFailures; i++) {
+            using var scope = factory.Services.CreateScope();
+            var auth = scope.ServiceProvider.GetRequiredService<UserAuthService>();
+            var failed = await auth.AuthenticateAsync(
+                TestAuth.Username, $"bad-password-{i}", client, $"10.0.{i / 256}.{i % 256}:prismedia", CancellationToken.None);
+            Assert.False(failed.IsThrottled);
+        }
+
+        using var finalScope = factory.Services.CreateScope();
+        var finalAuth = finalScope.ServiceProvider.GetRequiredService<UserAuthService>();
+        var locked = await finalAuth.AuthenticateAsync(
+            $"  {TestAuth.Username.ToUpperInvariant()} ", TestAuth.Password, client, "10.1.0.1:prismedia", CancellationToken.None);
+        var basic = await finalAuth.VerifyCredentialsAsync(
+            TestAuth.Username, TestAuth.Password, "10.1.0.2:prismedia", CancellationToken.None);
+
+        Assert.True(locked.IsThrottled);
+        Assert.True(basic.IsThrottled);
     }
 
     [Fact]
