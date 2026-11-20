@@ -1394,6 +1394,9 @@
   function handleProviderChange(event: Event) {
     const provider = (event as MediaProviderChangeEvent).detail;
     if (isHLSProvider(provider)) {
+      // Load the bundled hls.js instead of vidstack's default CDN copy, so playback works
+      // offline on a LAN and the app's script Content-Security-Policy stays same-origin.
+      provider.library = () => import("hls.js");
       provider.config = {
         ...adaptiveHlsBufferConfig(),
       };
