@@ -76,6 +76,7 @@ Most installs need **no** environment variables. The container generates everyth
 | `PRISMEDIA_SECRET` | Auto-generated, persisted to `/data/.prismedia-secret` | Encryption key for plugin credentials (e.g. provider API keys) stored at rest. The container creates and persists one automatically, so it survives container recreation as long as `/data` persists. Set it explicitly only if you manage the key yourself. Keep the value stable; changing it makes previously encrypted credentials unreadable. See [Authentication & User Accounts](../deployment/authentication.md). |
 | `PRISMEDIA_RECOVERY_PASSWORD` | Unset | Locked out? Set to reset (or create) an enabled administrator's password on boot, sign back in, then unset. See [Password recovery](../deployment/authentication.md#password-recovery). |
 | `PRISMEDIA_RECOVERY_USERNAME` | `admin` | The account `PRISMEDIA_RECOVERY_PASSWORD` resets or creates. |
+| `PRISMEDIA_TRUSTED_PROXIES` | Unset | Comma-separated IPs or CIDR ranges of reverse proxies whose `X-Forwarded-For`/`X-Forwarded-Proto` headers Prismedia trusts. See [Reverse Proxy](../deployment/reverse-proxy.md#forward-standard-headers). |
 | `ASPNETCORE_URLS` | `http://0.0.0.0:8008` | Override the in-container listen address/port. |
 | `PRISMEDIA_HLS_TRANSCODER` | `auto` | Force a transcoder profile (`auto`, `software`, hardware encoders). See [HLS Streaming](../developers/hls-streaming.md). |
 | `PRISMEDIA_VAAPI_DEVICE` | `/dev/dri/renderD128` | VAAPI render node for hardware transcoding. |
