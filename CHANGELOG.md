@@ -213,6 +213,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Hardened security across the server and web app: stricter permission checks for editing items and creating libraries, signed-in access for generated thumbnails and previews, safer handling of artwork links and downloads, a content security policy with sanitized book content in the reader, safer file-manager operations on library roots, read-only libraries and links, size limits for archive pages, required checksums for catalog plugins, an additional per-account sign-in limit, and updated cryptography dependencies.
+- Added opt-in trusted reverse-proxy support with `PRISMEDIA_TRUSTED_PROXIES`.
+
 - Gallery, series, season, album, artist, author, book, and comic pages list every item again instead of stopping at the first 250 of each kind. Next and previous in the reader, and Identify reviews of large series, include every item too.
 
 - The bulk selection bar stays available while you are selecting items, however far you scroll. Filter and selection rows that hide automatically on scroll return when you scroll back to the top.
