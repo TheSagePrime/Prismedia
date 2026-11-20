@@ -103,8 +103,12 @@ internal static class EntityFileResults {
         }
 
         var output = new MemoryStream();
-        await using (var entryStream = entry.Open()) {
-            await entryStream.CopyToAsync(output, cancellationToken);
+        try {
+            await ArchiveEntryReader.CopyBoundedAsync(entry, output, cancellationToken);
+        } catch (InvalidDataException) {
+            // Oversized (or corrupt) members are not served.
+            await output.DisposeAsync();
+            return null;
         }
 
         output.Position = 0;

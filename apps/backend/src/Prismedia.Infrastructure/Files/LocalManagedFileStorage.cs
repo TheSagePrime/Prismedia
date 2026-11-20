@@ -3,6 +3,7 @@ using Prismedia.Contracts.Files;
 using Prismedia.Domain.Entities;
 using Prismedia.Contracts.Media;
 using Prismedia.Contracts.System;
+using Prismedia.Infrastructure.Acquisition;
 
 namespace Prismedia.Infrastructure.Files;
 
@@ -20,6 +21,7 @@ public sealed class LocalManagedFileStorage(ILibraryFileMutationGuard mutations)
         ResolvedFilePath directory,
         CancellationToken cancellationToken) {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureResolvesInsideRoot(directory);
         var info = new DirectoryInfo(directory.AbsolutePath);
         if (!info.Exists) {
             throw new FileOperationException(ApiProblemCodes.NotFound, "Directory was not found.");
@@ -47,6 +49,7 @@ public sealed class LocalManagedFileStorage(ILibraryFileMutationGuard mutations)
         IReadOnlyList<FileLinkedEntity> linkedEntities,
         CancellationToken cancellationToken) {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureResolvesInsideRoot(path);
         var info = GetExistingInfo(path.AbsolutePath);
         var entry = ToEntry(path.Root.Id, path.Root.Path, info);
 
@@ -62,7 +65,13 @@ public sealed class LocalManagedFileStorage(ILibraryFileMutationGuard mutations)
                 var budgetExceeded = false;
                 long count = 0;
                 long size = 0;
-                foreach (var f in dir.EnumerateFiles("*", SearchOption.AllDirectories)) {
+                // Links are skipped so the stats never describe content outside the library root.
+                var walk = new EnumerationOptions {
+                    RecurseSubdirectories = true,
+                    AttributesToSkip = FileAttributes.ReparsePoint,
+                    IgnoreInaccessible = false,
+                };
+                foreach (var f in dir.EnumerateFiles("*", walk)) {
                     cancellationToken.ThrowIfCancellationRequested();
                     if (budget.Elapsed > DirectoryStatsBudget) {
                         budgetExceeded = true;
@@ -99,16 +108,34 @@ public sealed class LocalManagedFileStorage(ILibraryFileMutationGuard mutations)
         ResolvedFilePath path,
         CancellationToken cancellationToken) {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureResolvesInsideRoot(path);
         var file = new FileInfo(path.AbsolutePath);
         if (!file.Exists) {
             throw new FileOperationException(ApiProblemCodes.NotFound, "File was not found.");
         }
 
+        // A link (already confirmed to stay inside the root) streams its target's bytes, so report
+        // the target's size and timestamp rather than the link's own.
+        var data = file.LinkTarget is null
+            ? file
+            : file.ResolveLinkTarget(returnFinalTarget: true) as FileInfo ?? file;
         return Task.FromResult(new FileContentInfo(
             file.FullName,
             DetectMimeType(file.Name),
-            new DateTimeOffset(file.LastWriteTimeUtc, TimeSpan.Zero),
-            file.Length));
+            new DateTimeOffset(data.LastWriteTimeUtc, TimeSpan.Zero),
+            data.Length));
+    }
+
+    /// <inheritdoc />
+    public bool ResolvesInsideRoot(ResolvedFilePath path) {
+        try {
+            var root = CompletedPayloadFileSystem.CanonicalPath(Path.GetFullPath(path.Root.Path));
+            var target = CompletedPayloadFileSystem.CanonicalPath(Path.GetFullPath(path.AbsolutePath));
+            return FileSystemPathComparison.IsSameOrDescendant(root, target);
+        } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
+            // Link cycles, unresolvable links, or unreadable ancestors are treated as escaping the root.
+            return false;
+        }
     }
 
     /// <inheritdoc />
@@ -258,6 +285,12 @@ public sealed class LocalManagedFileStorage(ILibraryFileMutationGuard mutations)
          mimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) ||
          mimeType.StartsWith("text/", StringComparison.OrdinalIgnoreCase) ||
          mimeType is "application/json" or "application/xml");
+
+    private void EnsureResolvesInsideRoot(ResolvedFilePath path) {
+        if (!ResolvesInsideRoot(path)) {
+            throw new FileOperationException(ApiProblemCodes.InvalidPath, "Files paths cannot follow links outside the selected library root.");
+        }
+    }
 
     private static void EnsureNoSymlinkAncestor(ResolvedFilePath path) {
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path.Root.Path));

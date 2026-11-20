@@ -184,6 +184,8 @@ public sealed class FilesVisibilityTests {
             CancellationToken cancellationToken) =>
             Task.FromResult(new FileContentInfo(path.AbsolutePath, "video/mp4", null, 0));
 
+        public bool ResolvesInsideRoot(ResolvedFilePath path) => true;
+
         public Task CreateDirectoryAsync(ResolvedFilePath path, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task WriteFileAsync(ResolvedFilePath path, Stream content, CancellationToken cancellationToken) => Task.CompletedTask;

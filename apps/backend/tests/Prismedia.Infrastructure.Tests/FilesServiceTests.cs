@@ -290,12 +290,228 @@ public sealed class FilesServiceTests : IDisposable {
         }
     }
 
+    [Theory]
+    [InlineData("/")]
+    [InlineData(".")]
+    [InlineData("./")]
+    [InlineData("Movies/..")]
+    public async Task DeleteRejectsPathsThatNormalizeToTheLibraryRoot(string path) {
+        var keep = Path.Combine(_tempRoot.FullName, "Movies", "keep.mkv");
+        Directory.CreateDirectory(Path.GetDirectoryName(keep)!);
+        await File.WriteAllTextAsync(keep, "keep");
+        var service = CreateService();
+
+        var error = await Assert.ThrowsAsync<FileOperationException>(() =>
+            service.DeleteAsync(new FileDeleteRequest(_rootId, path), hideNsfw: false, CancellationToken.None));
+
+        Assert.Equal(Prismedia.Contracts.System.ApiProblemCodes.InvalidPath, error.Code);
+        Assert.True(File.Exists(keep));
+    }
+
+    [Theory]
+    [InlineData("/")]
+    [InlineData(".")]
+    [InlineData("Movies/..")]
+    public async Task MoveAndRenameRejectTheLibraryRootAsSource(string path) {
+        Directory.CreateDirectory(Path.Combine(_tempRoot.FullName, "Movies"));
+        var service = CreateService();
+
+        var move = await Assert.ThrowsAsync<FileOperationException>(() =>
+            service.MoveAsync(new FileMoveRequest(_rootId, path, _rootId, "Movies/inner"), hideNsfw: false, CancellationToken.None));
+        var rename = await Assert.ThrowsAsync<FileOperationException>(() =>
+            service.RenameAsync(new FileRenameRequest(_rootId, path, "renamed"), hideNsfw: false, CancellationToken.None));
+
+        Assert.Equal(Prismedia.Contracts.System.ApiProblemCodes.InvalidPath, move.Code);
+        Assert.Equal(Prismedia.Contracts.System.ApiProblemCodes.InvalidPath, rename.Code);
+        Assert.True(Directory.Exists(_tempRoot.FullName));
+        Assert.True(Directory.Exists(Path.Combine(_tempRoot.FullName, "Movies")));
+    }
+
+    [Fact]
+    public async Task MoveIntoRootChildStillSucceeds() {
+        Directory.CreateDirectory(Path.Combine(_tempRoot.FullName, "Inbox"));
+        await File.WriteAllTextAsync(Path.Combine(_tempRoot.FullName, "Inbox", "a.mp4"), "video");
+        var service = CreateService();
+
+        await service.MoveAsync(new FileMoveRequest(_rootId, "Inbox/a.mp4", _rootId, "a.mp4"), hideNsfw: false, CancellationToken.None);
+
+        Assert.True(File.Exists(Path.Combine(_tempRoot.FullName, "a.mp4")));
+    }
+
+    [Fact]
+    public async Task ReadOnlyRootRejectsEveryWriteBeforeTouchingDisk() {
+        var existing = Path.Combine(_tempRoot.FullName, "existing.mp4");
+        await File.WriteAllTextAsync(existing, "video");
+        var service = CreateService(readOnly: true);
+        await using var stream = new MemoryStream("x"u8.ToArray());
+        var readOnly = Prismedia.Contracts.System.ApiProblemCodes.ReadOnlyLibrary;
+
+        Func<Task>[] writes = [
+            () => service.CreateFolderAsync(new FileCreateFolderRequest(_rootId, string.Empty, "New"), false, CancellationToken.None),
+            () => service.UploadAsync(new FileUploadRequest(_rootId, string.Empty, [new FileUploadItem("up.txt", stream)]), false, CancellationToken.None),
+            () => service.RenameAsync(new FileRenameRequest(_rootId, "existing.mp4", "renamed.mp4"), false, CancellationToken.None),
+            () => service.MoveAsync(new FileMoveRequest(_rootId, "existing.mp4", _rootId, "Moved/existing.mp4"), false, CancellationToken.None),
+            () => service.DeleteAsync(new FileDeleteRequest(_rootId, "existing.mp4"), false, CancellationToken.None),
+        ];
+        foreach (var write in writes) {
+            var error = await Assert.ThrowsAsync<FileOperationException>(write);
+            Assert.Equal(readOnly, error.Code);
+        }
+
+        Assert.True(File.Exists(existing));
+        Assert.False(Directory.Exists(Path.Combine(_tempRoot.FullName, "New")));
+        Assert.False(File.Exists(Path.Combine(_tempRoot.FullName, "up.txt")));
+        Assert.False(File.Exists(Path.Combine(_tempRoot.FullName, "renamed.mp4")));
+        Assert.False(Directory.Exists(Path.Combine(_tempRoot.FullName, "Moved")));
+    }
+
+    [Fact]
+    public async Task MoveFromWritableRootIntoReadOnlyRootIsRejected() {
+        var otherRootId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        var other = Directory.CreateTempSubdirectory("prismedia-files-readonly-");
+        try {
+            var source = Path.Combine(_tempRoot.FullName, "a.mp4");
+            await File.WriteAllTextAsync(source, "video");
+            var service = CreateService();
+            Persistence.Roots[otherRootId] = new FileLibraryRoot(
+                otherRootId, other.FullName, "External", true, true, true, false, false, false, IsReadOnly: true);
+
+            var error = await Assert.ThrowsAsync<FileOperationException>(() =>
+                service.MoveAsync(new FileMoveRequest(_rootId, "a.mp4", otherRootId, "a.mp4"), false, CancellationToken.None));
+
+            Assert.Equal(Prismedia.Contracts.System.ApiProblemCodes.ReadOnlyLibrary, error.Code);
+            Assert.True(File.Exists(source));
+        } finally {
+            other.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReadsRefuseLinksThatLeaveTheLibraryRoot() {
+        if (OperatingSystem.IsWindows()) {
+            return;
+        }
+
+        var outside = Directory.CreateTempSubdirectory("prismedia-files-outside-");
+        try {
+            await File.WriteAllTextAsync(Path.Combine(outside.FullName, "secret.txt"), "secret");
+            File.CreateSymbolicLink(Path.Combine(_tempRoot.FullName, "file-link.txt"), Path.Combine(outside.FullName, "secret.txt"));
+            Directory.CreateSymbolicLink(Path.Combine(_tempRoot.FullName, "dir-link"), outside.FullName);
+            var service = CreateService();
+            var invalid = Prismedia.Contracts.System.ApiProblemCodes.InvalidPath;
+
+            foreach (var path in new[] { "file-link.txt", "dir-link/secret.txt" }) {
+                var content = await Assert.ThrowsAsync<FileOperationException>(() =>
+                    service.GetContentInfoAsync(new FileDetailRequest(_rootId, path), false, CancellationToken.None));
+                Assert.Equal(invalid, content.Code);
+                var detail = await Assert.ThrowsAsync<FileOperationException>(() =>
+                    service.GetDetailAsync(new FileDetailRequest(_rootId, path), false, CancellationToken.None));
+                Assert.Equal(invalid, detail.Code);
+            }
+
+            var listing = await Assert.ThrowsAsync<FileOperationException>(() =>
+                service.ListChildrenAsync(new FileChildrenRequest(_rootId, "dir-link"), false, CancellationToken.None));
+            Assert.Equal(invalid, listing.Code);
+        } finally {
+            outside.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReadsFollowLinksThatStayInsideTheLibraryRoot() {
+        if (OperatingSystem.IsWindows()) {
+            return;
+        }
+
+        Directory.CreateDirectory(Path.Combine(_tempRoot.FullName, "Real"));
+        await File.WriteAllTextAsync(Path.Combine(_tempRoot.FullName, "Real", "clip.mp4"), "video");
+        File.CreateSymbolicLink(Path.Combine(_tempRoot.FullName, "clip-link.mp4"), Path.Combine(_tempRoot.FullName, "Real", "clip.mp4"));
+        Directory.CreateSymbolicLink(Path.Combine(_tempRoot.FullName, "Alias"), "Real");
+        var service = CreateService();
+
+        var viaFile = await service.GetContentInfoAsync(new FileDetailRequest(_rootId, "clip-link.mp4"), false, CancellationToken.None);
+        var viaDir = await service.GetContentInfoAsync(new FileDetailRequest(_rootId, "Alias/clip.mp4"), false, CancellationToken.None);
+        var listing = await service.ListChildrenAsync(new FileChildrenRequest(_rootId, "Alias"), false, CancellationToken.None);
+
+        Assert.Equal(5, viaFile.SizeBytes);
+        Assert.Equal(5, viaDir.SizeBytes);
+        Assert.Single(listing.Entries);
+    }
+
+    [Fact]
+    public async Task DirectoryDetailStatsDoNotCountFilesBehindOutboundLinks() {
+        if (OperatingSystem.IsWindows()) {
+            return;
+        }
+
+        var outside = Directory.CreateTempSubdirectory("prismedia-files-outside-");
+        try {
+            await File.WriteAllTextAsync(Path.Combine(outside.FullName, "secret.txt"), "secret");
+            Directory.CreateDirectory(Path.Combine(_tempRoot.FullName, "Folder"));
+            await File.WriteAllTextAsync(Path.Combine(_tempRoot.FullName, "Folder", "a.txt"), "a");
+            Directory.CreateSymbolicLink(Path.Combine(_tempRoot.FullName, "Folder", "escape"), outside.FullName);
+            var service = CreateService();
+
+            var detail = await service.GetDetailAsync(new FileDetailRequest(_rootId, "Folder"), false, CancellationToken.None);
+
+            Assert.Equal(1, detail.DirectoryFileCount);
+        } finally {
+            outside.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ArchivePlanSkipsLinksThatLeaveTheLibraryRoot() {
+        if (OperatingSystem.IsWindows()) {
+            return;
+        }
+
+        var outside = Directory.CreateTempSubdirectory("prismedia-files-outside-");
+        try {
+            await File.WriteAllTextAsync(Path.Combine(outside.FullName, "secret.txt"), "secret");
+            var folder = Path.Combine(_tempRoot.FullName, "Folder");
+            Directory.CreateDirectory(Path.Combine(folder, "Real"));
+            await File.WriteAllTextAsync(Path.Combine(folder, "Real", "kept.txt"), "kept");
+            File.CreateSymbolicLink(Path.Combine(folder, "inside-link.txt"), Path.Combine(folder, "Real", "kept.txt"));
+            File.CreateSymbolicLink(Path.Combine(folder, "file-escape.txt"), Path.Combine(outside.FullName, "secret.txt"));
+            Directory.CreateSymbolicLink(Path.Combine(folder, "dir-escape"), outside.FullName);
+            var archives = new RecordingArchives();
+            Archives = archives;
+            var service = CreateService();
+
+            await service.PrepareArchiveAsync(new FileArchiveRequest(_rootId, "Folder"), false, CancellationToken.None);
+
+            var paths = archives.Plan!.Entries.Select(entry => entry.ArchivePath).Order(StringComparer.Ordinal).ToArray();
+            Assert.Equal(["Real", "Real/kept.txt", "inside-link.txt"], paths);
+        } finally {
+            outside.Delete(recursive: true);
+        }
+    }
+
+    private IFileArchivePreparationService? Archives { get; set; }
+
+    private sealed class RecordingArchives : IFileArchivePreparationService {
+        public FileArchivePlan? Plan { get; private set; }
+
+        public FileArchivePreparation Start(FileArchivePlan plan) {
+            Plan = plan;
+            return new FileArchivePreparation(Guid.NewGuid(), plan.FileName, false, 0, 0, plan.Entries.Count, null);
+        }
+
+        public FileArchivePreparation? Get(Guid id) => null;
+
+        public PreparedFileArchive? Claim(Guid id) => null;
+
+        public void Release(PreparedFileArchive archive) {
+        }
+    }
+
     private RecordingFilesPersistence Persistence { get; } = new();
     private RecordingJobQueue Queue { get; } = new();
     private RecordingSourcePathOwnerReader SourceOwners { get; } = new();
     private RecordingLifecycleMutationLease Lifecycle { get; } = new();
 
-    private FilesService CreateService() {
+    private FilesService CreateService(bool readOnly = false) {
         Persistence.Roots[_rootId] = new FileLibraryRoot(
             _rootId,
             _tempRoot.FullName,
@@ -305,12 +521,13 @@ public sealed class FilesServiceTests : IDisposable {
             true,
             false,
             false,
-            false);
+            false,
+            IsReadOnly: readOnly);
 
         return new FilesService(
             Persistence,
             new LocalManagedFileStorage(new TestFileMutationGuard()),
-            new FileArchivePreparationService(),
+            Archives ?? (IFileArchivePreparationService)new FileArchivePreparationService(),
             Queue,
             new EntitySourcePathMutationCoordinator(SourceOwners, Lifecycle));
     }
