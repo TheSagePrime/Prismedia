@@ -35,7 +35,16 @@ public sealed partial class SettingsService {
     /// Falls back to the user profile directory or the filesystem root when no readable path is
     /// supplied.
     /// </summary>
-    public Task<LibraryBrowseResponse> BrowseLibraryPathAsync(string? path, CancellationToken cancellationToken) {
+    /// <param name="path">Directory to list; null or empty starts at the user profile directory.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="hiddenRootPaths">
+    /// Roots the caller cannot access. When supplied, the listing omits those roots and returns
+    /// null when the resolved directory lies at or below one of them.
+    /// </param>
+    public Task<LibraryBrowseResponse?> BrowseLibraryPathAsync(
+        string? path,
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<string>? hiddenRootPaths = null) {
         cancellationToken.ThrowIfCancellationRequested();
         var requestedPath = string.IsNullOrWhiteSpace(path)
             ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
@@ -45,13 +54,19 @@ public sealed partial class SettingsService {
             directory = new DirectoryInfo(Path.GetPathRoot(requestedPath) ?? "/");
         }
 
+        var hidden = hiddenRootPaths ?? [];
+        if (hidden.Count > 0 && IsWithinAnyRoot(directory.FullName, hidden)) {
+            return Task.FromResult<LibraryBrowseResponse?>(null);
+        }
+
         var directories = directory.EnumerateDirectories()
             .Where(child => !child.Attributes.HasFlag(FileAttributes.Hidden))
+            .Where(child => hidden.Count == 0 || !IsWithinAnyRoot(child.FullName, hidden))
             .OrderBy(child => child.Name)
             .Select(child => new LibraryBrowseEntry(child.Name, child.FullName))
             .ToArray();
 
-        return Task.FromResult(new LibraryBrowseResponse(
+        return Task.FromResult<LibraryBrowseResponse?>(new LibraryBrowseResponse(
             directory.FullName,
             directory.Parent?.FullName,
             directories));
