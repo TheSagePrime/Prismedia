@@ -37,6 +37,20 @@ export const documentParseType = mediaType => {
     return null
 }
 
+const PASSIVE_RESOURCE_TYPE = /^(?:image\/(?!svg)[\w.+-]+|audio\/[\w.+-]+|video\/[\w.+-]+|font\/[\w.+-]+|text\/css|application\/(?:font-woff2?|x-font-[\w.+-]+|vnd\.ms-opentype|font-sfnt))$/
+
+/**
+ * The blob type to use for a book resource that is NOT parsed and sanitized. Only passive
+ * types (raster images, audio, video, fonts, CSS) keep their declared type; anything else
+ * becomes `application/octet-stream`, so an unexpected or missing media type can never
+ * make a frame render unsanitized markup as a same-origin document.
+ */
+export const passiveResourceType = mediaType => {
+    if (typeof mediaType !== 'string') return 'application/octet-stream'
+    const base = mediaType.split(';')[0].trim().toLowerCase()
+    return PASSIVE_RESOURCE_TYPE.test(base) ? base : 'application/octet-stream'
+}
+
 /** Whether a URL-ish attribute value would resolve to a script-executing scheme. */
 export const isScriptUrl = value =>
     typeof value === 'string' && SCRIPT_SCHEME.test(value.replace(IGNORED_URL_CHARS, ''))

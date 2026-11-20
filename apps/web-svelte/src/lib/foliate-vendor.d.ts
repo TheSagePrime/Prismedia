@@ -7,5 +7,6 @@ declare module "$lib/vendor/foliate-js/sanitize.js" {
   export function sanitizeBookTree<T extends Element>(root: T): T;
   export function documentParseType(mediaType: string | undefined | null): string | null;
   export function isScriptUrl(value: string): boolean;
+  export function passiveResourceType(mediaType: string | undefined | null): string;
 }
 declare module "$lib/vendor/foliate-js/epub.js";

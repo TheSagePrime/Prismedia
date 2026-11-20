@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { documentParseType, sanitizeBookDocument, sanitizeBookTree } from "$lib/vendor/foliate-js/sanitize.js";
+import {
+  documentParseType,
+  passiveResourceType,
+  sanitizeBookDocument,
+  sanitizeBookTree,
+} from "$lib/vendor/foliate-js/sanitize.js";
 import { EPUB } from "$lib/vendor/foliate-js/epub.js";
 
 const XHTML = "application/xhtml+xml";
@@ -112,6 +117,19 @@ describe("sanitizeBookDocument", () => {
   });
 });
 
+describe("passiveResourceType", () => {
+  it("keeps passive types and downgrades everything else", () => {
+    expect(passiveResourceType("image/jpeg")).toBe("image/jpeg");
+    expect(passiveResourceType("font/woff2")).toBe("font/woff2");
+    expect(passiveResourceType("audio/mpeg")).toBe("audio/mpeg");
+    expect(passiveResourceType("text/css")).toBe("text/css");
+    expect(passiveResourceType("image/svg+xml")).toBe("application/octet-stream");
+    expect(passiveResourceType("text/xsl")).toBe("application/octet-stream");
+    expect(passiveResourceType("text/plain")).toBe("application/octet-stream");
+    expect(passiveResourceType(undefined)).toBe("application/octet-stream");
+  });
+});
+
 describe("documentParseType", () => {
   it("normalizes every renderable document spelling and ignores inert types", () => {
     expect(documentParseType("text/html")).toBe("text/html");
@@ -148,18 +166,22 @@ describe("EPUB loader", () => {
 <body><p>Readable text</p><script>window.parent.__bookScript = true</script>
 <img src="missing.png" onerror="window.parent.__bookOnerror = true"/>
 <a href="javascript:window.parent.__bookLink = true">link</a>
-<iframe src="data.xml"></iframe></body></html>`;
+<iframe src="data.xml"></iframe><iframe src="evil.xsl"></iframe><iframe src="untyped.xhtml"></iframe>
+<img src="pic.png"/></body></html>`;
 
   const dataXml = `<?xml version="1.0"?><root><script xmlns="http://www.w3.org/1999/xhtml">x()</script><v>1</v></root>`;
 
   const files: Record<string, string> = {
     "META-INF/container.xml": `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
     "OEBPS/content.opf": `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title></metadata>
-<manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="js" href="app.js" media-type="text/javascript"/><item id="d" href="data.xml" media-type="application/xml"/></manifest>
+<manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="js" href="app.js" media-type="text/javascript"/><item id="d" href="data.xml" media-type="application/xml"/><item id="x" href="evil.xsl" media-type="text/xsl"/><item id="u" href="untyped.xhtml"/><item id="p" href="pic.png" media-type="image/png"/></manifest>
 <spine><itemref idref="c1"/></spine></package>`,
     "OEBPS/c1.xhtml": chapter,
     "OEBPS/app.js": "window.parent.__bookExternal = true",
     "OEBPS/data.xml": dataXml,
+    "OEBPS/evil.xsl": chapter,
+    "OEBPS/untyped.xhtml": chapter,
+    "OEBPS/pic.png": "png",
   };
 
   it("serializes section documents without scripts, handlers or script links", async () => {
@@ -170,8 +192,10 @@ describe("EPUB loader", () => {
     }).init();
 
     const serialized: Promise<unknown>[] = [];
-    book.transformTarget.addEventListener("data", (event: CustomEvent<{ data: unknown }>) => {
+    const types = new Map<string, string>();
+    book.transformTarget.addEventListener("data", (event: CustomEvent<{ data: unknown; type: string; name: string }>) => {
       serialized.push(Promise.resolve(event.detail.data));
+      types.set(event.detail.name, event.detail.type);
     });
 
     const url = await book.sections[0].load();
@@ -187,5 +211,9 @@ describe("EPUB loader", () => {
     const nestedXml = texts.find((text) => text.includes("<v>1</v>"));
     expect(nestedXml).toBeDefined();
     expect(nestedXml).not.toMatch(/<script/i);
+    // Unparsed resources never keep a renderable document type.
+    expect(types.get("OEBPS/evil.xsl")).toBe("application/octet-stream");
+    expect(types.get("OEBPS/untyped.xhtml")).toBe("application/octet-stream");
+    expect(types.get("OEBPS/pic.png")).toBe("image/png");
   });
 });

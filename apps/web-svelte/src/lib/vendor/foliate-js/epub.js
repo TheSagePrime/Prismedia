@@ -1,5 +1,5 @@
 import * as CFI from './epubcfi.js'
-import { sanitizeBookDocument, documentParseType } from './sanitize.js'
+import { sanitizeBookDocument, documentParseType, passiveResourceType } from './sanitize.js'
 
 const NS = {
     CONTAINER: 'urn:oasis:names:tc:opendocument:xmlns:container',
@@ -788,7 +788,8 @@ class Loader {
         if (shouldReplace) return this.loadReplaced(item, parents)
         // NOTE: this can be replaced with `Promise.try()`
         const tryLoadBlob = Promise.resolve().then(() => this.loadBlob(href))
-        return this.createURL(href, tryLoadBlob, mediaType, parent)
+        // Prismedia: unparsed resources may only keep passive (non-document) types.
+        return this.createURL(href, tryLoadBlob, passiveResourceType(mediaType), parent)
     }
     async loadHref(href, base, parents = []) {
         if (isExternal(href)) return href
