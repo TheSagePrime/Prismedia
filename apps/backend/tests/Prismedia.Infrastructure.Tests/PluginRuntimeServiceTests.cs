@@ -221,6 +221,53 @@ public sealed class PluginRuntimeServiceTests : IDisposable {
         Assert.True(File.Exists(Path.Combine(_tempRoot, "plugins", "community", "tmdb", "1.2.0", "manifest.json")));
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("not-a-checksum")]
+    public async Task CatalogRefusesRemotePluginsWithoutAValidChecksum(string sha256) {
+        var archive = CreatePluginArchive(
+            """
+            {
+              "manifestVersion": 1,
+              "apiTags": ["prismedia"],
+              "id": "tmdb",
+              "name": "TMDB",
+              "version": "1.2.0",
+              "runtime": "dotnet-process",
+              "entry": "Prismedia.Plugin.Tmdb.dll",
+              "compat": { "pluginApiMin": "1.0.0", "pluginApiMax": null, "prismediaMin": "1.0.0", "prismediaMax": null },
+              "supports": [ { "entityKind": "video", "actions": ["lookup-id"] } ]
+            }
+            """);
+        var index = $$"""
+        {
+          "plugins": [
+            {
+              "id": "tmdb", "name": "TMDB", "version": "1.2.0", "date": "2026-05-28",
+              "path": "plugins/tmdb.zip", "sha256": "{{sha256}}", "runtime": "dotnet-process",
+              "isNsfw": false, "manifestVersion": 1, "apiTags": ["prismedia"],
+              "compat": { "pluginApiMin": "1.0.0", "pluginApiMax": null, "prismediaMin": "1.0.0", "prismediaMax": null },
+              "supports": [ { "entityKind": "video", "actions": ["lookup-id"] } ]
+            }
+          ]
+        }
+        """;
+        var handler = new StaticHttpMessageHandler(new Dictionary<string, byte[]> {
+            ["https://plugins.example.test/index.json"] = System.Text.Encoding.UTF8.GetBytes(index),
+            ["https://plugins.example.test/plugins/tmdb.zip"] = archive
+        });
+        await using var db = CreateContext();
+        var catalog = new PluginCatalogService(ProviderCredentialTestStore.Create(db),
+            db,
+            new PluginCatalogOptions([], _tempRoot, "1.0.0", "https://plugins.example.test/index.json"),
+            new HttpClient(handler));
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => catalog.InstallAsync("tmdb", CancellationToken.None));
+
+        Assert.DoesNotContain(handler.Requests, uri => uri.ToString() == "https://plugins.example.test/plugins/tmdb.zip");
+        Assert.False(Directory.Exists(Path.Combine(_tempRoot, "plugins", "community", "tmdb", "1.2.0")));
+    }
+
     [Fact]
     public async Task CatalogReportsAndInstallsNewerRemotePluginUpdates() {
         var oldPluginDir = Path.Combine(_tempRoot, "plugins", "community", "tmdb", "1.1.0");

@@ -110,6 +110,12 @@ public sealed partial class PluginCatalogService {
     }
 
     private async Task<string> DownloadArtifactAsync(PluginIndexEntry entry, CancellationToken cancellationToken) {
+        // Catalog artifacts are executable plugin code, so every index entry must pin its checksum.
+        if (entry.Sha256 is not { Length: 64 } expected || !expected.All(Uri.IsHexDigit)) {
+            throw new InvalidOperationException(
+                $"Plugin '{entry.Id}' cannot be installed because its index entry has no valid SHA-256 checksum.");
+        }
+
         var url = ResolveEntryUrl(entry.Path);
         var artifacts = Path.Combine(CommunityPluginRoot(), "artifacts");
         Directory.CreateDirectory(artifacts);
@@ -121,13 +127,14 @@ public sealed partial class PluginCatalogService {
             await remote.CopyToAsync(local, cancellationToken);
         }
 
-        if (!string.IsNullOrWhiteSpace(entry.Sha256)) {
-            await using var stream = File.OpenRead(path);
-            var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
-            if (!hash.Equals(entry.Sha256, StringComparison.OrdinalIgnoreCase)) {
-                File.Delete(path);
-                throw new InvalidOperationException($"Plugin artifact checksum mismatch for '{entry.Id}'.");
-            }
+        string hash;
+        await using (var stream = File.OpenRead(path)) {
+            hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
+        }
+
+        if (!hash.Equals(expected, StringComparison.OrdinalIgnoreCase)) {
+            File.Delete(path);
+            throw new InvalidOperationException($"Plugin artifact checksum mismatch for '{entry.Id}'.");
         }
 
         return path;
