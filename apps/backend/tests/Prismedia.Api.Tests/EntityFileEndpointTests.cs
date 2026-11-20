@@ -63,6 +63,30 @@ public sealed class EntityFileEndpointTests : IDisposable {
     }
 
     [Fact]
+    public async Task EntityFileEndpointNeverResolvesRemoteArtworkReferencesAsLocalFiles() {
+        // A relative file that a naive File.Exists check would match for the remote URL below.
+        var host = $"images-{Guid.NewGuid():N}.test";
+        var lookalikeDir = Path.Combine(Environment.CurrentDirectory, "https:", host);
+        Directory.CreateDirectory(lookalikeDir);
+        try {
+            await File.WriteAllTextAsync(Path.Combine(lookalikeDir, "poster.jpg"), "local");
+            using var factory = CreateFactory(new FakeEntityFileContentService(
+                new EntityFileContent(EntityId, "poster", $"https://{host}/poster.jpg", "image/jpeg")));
+            using var client = factory.CreateAuthenticatedClient();
+
+            using var response = await client.GetAsync($"/api/entities/{EntityId}/files/poster");
+
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        } finally {
+            Directory.Delete(lookalikeDir, recursive: true);
+            var parent = Path.GetDirectoryName(lookalikeDir)!;
+            if (!Directory.EnumerateFileSystemEntries(parent).Any()) {
+                Directory.Delete(parent);
+            }
+        }
+    }
+
+    [Fact]
     public async Task EntityFileEndpointReturnsNotFoundWhenFileIsMissing() {
         var filePath = Path.Combine(_tempDir, "missing.jpg");
         using var factory = CreateFactory(new FakeEntityFileContentService(

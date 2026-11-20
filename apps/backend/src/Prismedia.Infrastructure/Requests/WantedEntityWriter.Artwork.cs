@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Prismedia.Application.Artwork;
 using Prismedia.Domain.Entities;
 using Prismedia.Infrastructure.Persistence.Entities;
 using Prismedia.Infrastructure.Plugins;
@@ -124,7 +125,10 @@ public sealed partial class WantedEntityWriter {
     private async Task UpsertDeferredArtworkReferencesAsync(
         IReadOnlyCollection<DeferredArtworkReference> candidates,
         CancellationToken cancellationToken) {
+        // Deferred references are persisted verbatim as artwork paths, so only remote http(s) URLs
+        // may pass; anything else would later be resolved as a server-local file.
         var references = candidates
+            .Where(reference => RemoteArtworkUrl.IsAllowed(reference.Url))
             .GroupBy(reference => (reference.EntityId, reference.Role))
             .Select(group => group.First())
             .ToArray();

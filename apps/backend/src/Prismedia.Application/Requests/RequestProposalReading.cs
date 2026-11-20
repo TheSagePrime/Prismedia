@@ -1,3 +1,4 @@
+using Prismedia.Application.Artwork;
 using Prismedia.Contracts.Plugins;
 using Prismedia.Contracts.Requests;
 using Prismedia.Domain.Entities;
@@ -46,12 +47,14 @@ public static class RequestProposalReading {
     public static string FormatQualifiedIdentity(ExternalIdentity identity) =>
         $"{identity.Namespace}:{identity.Value}";
 
-    /// <summary>The best-ranked image url a proposal carries (books generally return cover art), or null.</summary>
+    /// <summary>
+    /// The best-ranked remote (http/https) image url a proposal carries (books generally return cover art), or null.
+    /// </summary>
     public static string? BestImage(EntityMetadataProposal proposal) =>
         proposal.Images
             .OrderByDescending(image => image.Rank ?? 0)
             .Select(image => image.Url)
-            .FirstOrDefault(url => !string.IsNullOrWhiteSpace(url));
+            .FirstOrDefault(RemoteArtworkUrl.IsAllowed);
 
     /// <summary>
     /// Extracts a 4-digit year from a patch's typed semantic dates first, then its legacy date

@@ -1,3 +1,4 @@
+using Prismedia.Application.Artwork;
 using Prismedia.Contracts.Plugins;
 using Prismedia.Contracts.System;
 using Prismedia.Application.Plugins;
@@ -42,6 +43,12 @@ internal static class IdentifyEntityEndpoints {
             ApplyIdentifyProposalRequest request,
             IIdentifyProviderService identify,
             CancellationToken cancellationToken) => {
+                if (!RemoteArtworkUrl.AllAllowed([request.Proposal], request.SelectedImages)) {
+                    return Results.BadRequest(new ApiProblem(
+                        ApiProblemCodes.IdentifyFailed,
+                        "Artwork must be an absolute http or https URL."));
+                }
+
                 try {
                     // Proposal applies share the queue-accept pipeline (upsert semantics, plugin
                     // provenance, NSFW propagation) rather than the manual-edit replace pipeline.

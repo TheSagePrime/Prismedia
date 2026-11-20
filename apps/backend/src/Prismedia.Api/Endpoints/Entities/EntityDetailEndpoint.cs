@@ -1,3 +1,4 @@
+using Prismedia.Application.Artwork;
 using Prismedia.Application.Entities;
 using Prismedia.Contracts.Entities;
 using Prismedia.Contracts.System;
@@ -59,6 +60,14 @@ internal static class EntityDetailEndpoint {
         IEntityMetadataPatchService metadata,
         IEntityReadService entities,
         CancellationToken cancellationToken) {
+        if (!RemoteArtworkUrl.AllAllowed(
+                (request.Children ?? []).Concat(request.Relationships ?? []),
+                request.SelectedImages)) {
+            return Results.BadRequest(new ApiProblem(
+                ApiProblemCodes.InvalidEntityMetadataPatch,
+                "Artwork must be an absolute http or https URL."));
+        }
+
         EntityMetadataPatchResult result;
         try {
             result = await metadata.ApplyPatchAsync(id, request, expectedKind, cancellationToken);
