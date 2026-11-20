@@ -270,6 +270,173 @@ public sealed class SettingsEndpointServiceTests {
         Assert.NotNull(own.CreatedByUserId);
     }
 
+    [Theory]
+    [InlineData("/media")]
+    [InlineData("/media/videos")]
+    [InlineData("/media/videos/")]
+    [InlineData("/media/videos/sub")]
+    [InlineData("/media/other/../videos/sub")]
+    public async Task LibraryCreatorsCannotOverlapRootsTheyCannotAccess(string path) {
+        using var factory = CreateFactory();
+        using var client = await CreateLibraryCreatorClientAsync(factory, allowNsfw: true);
+
+        using var response = await client.PostAsJsonAsync("/api/libraries", Root(path, isNsfw: false));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var roots = await factory.Services.GetRequiredService<ISettingsPersistence>()
+            .ListLibraryRootsAsync(CancellationToken.None);
+        Assert.Single(roots);
+    }
+
+    [Fact]
+    public async Task LibraryCreatorsMayUseSiblingAndGrantedPaths() {
+        using var factory = CreateFactory();
+        using var client = await CreateLibraryCreatorClientAsync(factory, allowNsfw: true);
+
+        using var sibling = await client.PostAsJsonAsync("/api/libraries", Root("/media/videos2", isNsfw: false));
+        Assert.Equal(HttpStatusCode.OK, sibling.StatusCode);
+
+        using var admin = factory.CreateAuthenticatedClient();
+        var userId = await UserIdAsync(admin, "creator");
+        using var grant = await admin.PutAsJsonAsync(
+            $"/api/libraries/{SampleRootId}/access",
+            new LibraryAccessUpdateRequest([userId]));
+        grant.EnsureSuccessStatusCode();
+
+        using var nested = await client.PostAsJsonAsync("/api/libraries", Root("/media/videos/sub", isNsfw: false));
+        Assert.Equal(HttpStatusCode.OK, nested.StatusCode);
+    }
+
+    [Fact]
+    public async Task LibraryCreatorRootsInsideNsfwRootsAreForcedNsfw() {
+        using var factory = CreateFactory();
+        using var client = await CreateLibraryCreatorClientAsync(factory, allowNsfw: true);
+        using var admin = factory.CreateAuthenticatedClient();
+        var userId = await UserIdAsync(admin, "creator");
+        using var adult = await admin.PostAsJsonAsync(
+            "/api/libraries",
+            Root("/media/adult", isNsfw: true) with { GrantUserIds = [userId] });
+        adult.EnsureSuccessStatusCode();
+        await EnableDirectlyAsync(factory, adult);
+
+        using var nested = await client.PostAsJsonAsync("/api/libraries", Root("/media/adult/sub", isNsfw: false));
+        var created = await nested.Content.ReadFromJsonAsync<LibraryRoot>();
+
+        Assert.Equal(HttpStatusCode.OK, nested.StatusCode);
+        Assert.True(created!.IsNsfw);
+
+        using var clear = await client.PatchAsJsonAsync(
+            $"/api/libraries/{created.Id}",
+            new LibraryRootUpdateRequest(null, null, null, null, null, null, null, null, IsNsfw: false));
+        var updated = await clear.Content.ReadFromJsonAsync<LibraryRoot>();
+        Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
+        Assert.True(updated!.IsNsfw);
+    }
+
+    [Fact]
+    public async Task SfwLibraryCreatorsCannotNestInsideGrantedNsfwRoots() {
+        using var factory = CreateFactory();
+        using var client = await CreateLibraryCreatorClientAsync(factory, allowNsfw: false);
+        using var admin = factory.CreateAuthenticatedClient();
+        var userId = await UserIdAsync(admin, "creator");
+        using var adult = await admin.PostAsJsonAsync(
+            "/api/libraries",
+            Root("/media/adult", isNsfw: true) with { GrantUserIds = [userId] });
+        adult.EnsureSuccessStatusCode();
+        await EnableDirectlyAsync(factory, adult);
+
+        using var nested = await client.PostAsJsonAsync("/api/libraries", Root("/media/adult/sub", isNsfw: false));
+
+        Assert.Equal(HttpStatusCode.Forbidden, nested.StatusCode);
+    }
+
+    [Fact]
+    public async Task LibraryCreatorsCannotMoveTheirRootIntoAnInaccessibleRoot() {
+        using var factory = CreateFactory();
+        using var client = await CreateLibraryCreatorClientAsync(factory, allowNsfw: true);
+        using var create = await client.PostAsJsonAsync("/api/libraries", Root("/media/mine", isNsfw: false));
+        var created = await create.Content.ReadFromJsonAsync<LibraryRoot>();
+
+        using var move = await client.PatchAsJsonAsync(
+            $"/api/libraries/{created!.Id}",
+            new LibraryRootUpdateRequest("/media/videos/inner", null, null, null, null, null, null, null, null));
+        using var rename = await client.PatchAsJsonAsync(
+            $"/api/libraries/{created.Id}",
+            new LibraryRootUpdateRequest(null, "Renamed", null, null, null, null, null, null, null));
+
+        Assert.Equal(HttpStatusCode.Forbidden, move.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, rename.StatusCode);
+    }
+
+    [Fact]
+    public async Task LibraryCreatorBrowseHidesRootsTheyCannotAccess() {
+        var parent = Directory.CreateTempSubdirectory("prismedia-browse-");
+        try {
+            var hidden = parent.CreateSubdirectory("hidden");
+            hidden.CreateSubdirectory("inside");
+            parent.CreateSubdirectory("open");
+            using var factory = CreateFactory();
+            using var admin = factory.CreateAuthenticatedClient();
+            using var adminRoot = await admin.PostAsJsonAsync(
+                "/api/libraries",
+                Root(hidden.FullName, isNsfw: false) with { Enabled = false });
+            adminRoot.EnsureSuccessStatusCode();
+            using var client = await CreateLibraryCreatorClientAsync(factory, allowNsfw: true);
+
+            var listing = await client.GetFromJsonAsync<LibraryBrowseResponse>(
+                $"/api/libraries/browse?path={Uri.EscapeDataString(parent.FullName)}");
+            using var inside = await client.GetAsync(
+                $"/api/libraries/browse?path={Uri.EscapeDataString(Path.Combine(hidden.FullName, "inside"))}");
+            var adminListing = await admin.GetFromJsonAsync<LibraryBrowseResponse>(
+                $"/api/libraries/browse?path={Uri.EscapeDataString(parent.FullName)}");
+
+            Assert.Equal(["open"], listing!.Directories.Select(entry => entry.Name).ToArray());
+            Assert.Equal(HttpStatusCode.Forbidden, inside.StatusCode);
+            Assert.Equal(2, adminListing!.Directories.Count);
+        } finally {
+            parent.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>Enables a root in the fake store without queueing scans through the real job queue.</summary>
+    private static async Task EnableDirectlyAsync(WebApplicationFactory<Program> factory, HttpResponseMessage created) {
+        var root = await created.Content.ReadFromJsonAsync<LibraryRoot>();
+        await factory.Services.GetRequiredService<ISettingsPersistence>()
+            .SaveLibraryRootAsync(root! with { Enabled = true }, CancellationToken.None);
+    }
+
+    private static readonly Guid SampleRootId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+
+    private static LibraryRootCreateRequest Root(string path, bool isNsfw) =>
+        new(path, null, Enabled: false, null, null, null, null, null, IsNsfw: isNsfw);
+
+    private static async Task<Guid> UserIdAsync(HttpClient admin, string username) {
+        var users = await admin.GetFromJsonAsync<JsonElement>("/api/users");
+        return users.GetProperty("items").EnumerateArray()
+            .Single(user => user.GetProperty("username").GetString() == username)
+            .GetProperty("id")
+            .GetGuid();
+    }
+
+    private static async Task<HttpClient> CreateLibraryCreatorClientAsync(
+        WebApplicationFactory<Program> factory,
+        bool allowNsfw) {
+        using var admin = factory.CreateAuthenticatedClient();
+        using var createUser = await admin.PostAsJsonAsync(
+            "/api/users",
+            new { Username = "creator", Password = "creator-password", CanCreateLibraries = true, AllowNsfw = allowNsfw });
+        createUser.EnsureSuccessStatusCode();
+
+        var client = factory.CreateClient();
+        using var login = await client.PostAsJsonAsync(
+            "/api/auth/login",
+            new { Username = "creator", Password = "creator-password" });
+        var token = (await login.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("accessToken").GetString();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", token);
+        return client;
+    }
+
     private static WebApplicationFactory<Program> CreateFactory() =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder => {

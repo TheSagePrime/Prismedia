@@ -57,7 +57,7 @@ public sealed class UserAuthService {
         ClientIdentity client,
         string bucket,
         CancellationToken cancellationToken) {
-        if (_throttle.IsThrottled(bucket)) {
+        if (_throttle.IsThrottled(bucket) || _throttle.IsAccountThrottled(username)) {
             return new UserAuthenticationResult(false, true, null, null, null);
         }
 
@@ -68,6 +68,7 @@ public sealed class UserAuthService {
         var verification = VerifyPassword(candidate?.PasswordHash, password);
         if (candidate is null || !candidate.User.Enabled || verification == PasswordVerification.Failed) {
             _throttle.RecordFailure(bucket);
+            _throttle.RecordAccountFailure(username);
             return new UserAuthenticationResult(false, false, null, null, null);
         }
 
@@ -97,7 +98,7 @@ public sealed class UserAuthService {
             return new CredentialVerificationResult(false, cachedUser);
         }
 
-        if (_throttle.IsThrottled(bucket)) {
+        if (_throttle.IsThrottled(bucket) || _throttle.IsAccountThrottled(username)) {
             return new CredentialVerificationResult(true, null);
         }
 
@@ -108,6 +109,7 @@ public sealed class UserAuthService {
         var verification = VerifyPassword(candidate?.PasswordHash, password);
         if (candidate is null || !candidate.User.Enabled || verification == PasswordVerification.Failed) {
             _throttle.RecordFailure(bucket);
+            _throttle.RecordAccountFailure(username);
             return new CredentialVerificationResult(false, null);
         }
 

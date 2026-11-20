@@ -201,6 +201,10 @@ public sealed partial class EntityMetadataApplyService : IEntityMetadataPatchSer
         }
     }
 
+    /// <summary>
+    /// Whether the request user may mutate this entity: system and admin callers may edit any
+    /// non-collection entity, and a collection is editable only by its owner.
+    /// </summary>
     private async Task<bool> CanEditCollectionAsync(Guid entityId, CancellationToken cancellationToken) {
         if (_currentUser is null || _currentUser.IsSystem) {
             return true;
@@ -210,7 +214,8 @@ public sealed partial class EntityMetadataApplyService : IEntityMetadataPatchSer
             .Where(detail => detail.EntityId == entityId)
             .Select(detail => (Guid?)detail.OwnerUserId)
             .FirstOrDefaultAsync(cancellationToken);
-        return ownership is null || ownership == _currentUser.UserId;
+        // Only collections carry per-user ownership; every other entity is admin-edited.
+        return ownership is null ? _currentUser.IsAdmin : ownership == _currentUser.UserId;
     }
 
     private async Task<EntityMetadataPatchResult> ApplyPatchWithinLifecycleAsync(

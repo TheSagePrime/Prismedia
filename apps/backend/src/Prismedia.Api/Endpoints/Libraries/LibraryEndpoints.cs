@@ -78,10 +78,17 @@ public static class LibraryEndpoints {
             string? path,
             HttpContext httpContext,
             SettingsService settings,
-            CancellationToken cancellationToken) =>
-            CanCreateLibraries(httpContext)
-                ? Results.Ok(await settings.BrowseLibraryPathAsync(path, cancellationToken))
-                : LibraryManagementForbidden())
+            ICurrentUserContext currentUser,
+            CancellationToken cancellationToken) => {
+            if (!CanCreateLibraries(httpContext)) {
+                return LibraryManagementForbidden();
+            }
+
+            // Library creators never see inside roots they cannot access.
+            var hidden = await InaccessibleRootPathsAsync(httpContext, settings, currentUser, cancellationToken);
+            var listing = await settings.BrowseLibraryPathAsync(path, cancellationToken, hidden);
+            return listing is null ? LibraryManagementForbidden() : Results.Ok(listing);
+        })
             .WithName("BrowseLibraryPath")
             .WithSummary("Browses local directories for watched-root selection.")
             .Produces<LibraryBrowseResponse>()
@@ -92,10 +99,21 @@ public static class LibraryEndpoints {
             HttpContext httpContext,
             SettingsService settings,
             ILibraryAccessStore access,
+            ICurrentUserContext currentUser,
             CancellationToken cancellationToken) => {
             var user = httpContext.GetCurrentUser()!;
             if (!CanCreateLibraries(httpContext)) {
                 return LibraryManagementForbidden();
+            }
+
+            var placement = await RestrictedPlacementAsync(
+                httpContext, settings, currentUser, request.Path, excludeRootId: null, cancellationToken);
+            if (placement is { Allowed: false }) {
+                return LibraryPlacementForbidden();
+            }
+
+            if (placement is { RequiresNsfw: true }) {
+                request = request with { IsNsfw = true };
             }
 
             LibraryRoot created;
@@ -129,9 +147,24 @@ public static class LibraryEndpoints {
             LibraryRootUpdateRequest request,
             HttpContext httpContext,
             SettingsService settings,
+            ICurrentUserContext currentUser,
             CancellationToken cancellationToken) => {
                 if (!await CanManageRootAsync(httpContext, settings, id, cancellationToken)) {
                     return LibraryManagementForbidden();
+                }
+
+                if (httpContext.GetCurrentUser() is { Role: not UserRole.Admin } &&
+                    await settings.GetLibraryRootAsync(id, cancellationToken) is { } current) {
+                    var effectivePath = string.IsNullOrWhiteSpace(request.Path) ? current.Path : request.Path;
+                    var placement = await RestrictedPlacementAsync(
+                        httpContext, settings, currentUser, effectivePath, id, cancellationToken);
+                    if (placement is { Allowed: false }) {
+                        return LibraryPlacementForbidden();
+                    }
+
+                    if (placement is { RequiresNsfw: true }) {
+                        request = request with { IsNsfw = true };
+                    }
                 }
 
                 LibraryRoot? root;
@@ -221,6 +254,54 @@ public static class LibraryEndpoints {
         var root = await settings.GetLibraryRootAsync(rootId, cancellationToken);
         return root?.CreatedByUserId == user.Id;
     }
+
+    /// <summary>
+    /// Paths of roots a non-admin caller cannot access; empty (no filtering) for admins.
+    /// </summary>
+    private static async Task<IReadOnlyList<string>> InaccessibleRootPathsAsync(
+        HttpContext httpContext,
+        SettingsService settings,
+        ICurrentUserContext currentUser,
+        CancellationToken cancellationToken) {
+        var user = httpContext.GetCurrentUser();
+        if (user is null || user.Role == UserRole.Admin) {
+            return [];
+        }
+
+        var allowed = await currentUser.GetAllowedLibraryRootIdsAsync(cancellationToken);
+        return allowed is null
+            ? []
+            : await settings.ListInaccessibleLibraryRootPathsAsync(user.Id, allowed, user.AllowNsfw, cancellationToken);
+    }
+
+    /// <summary>
+    /// Placement verdict for a non-admin root path, or null when the caller is unrestricted.
+    /// </summary>
+    private static async Task<LibraryRootPlacement?> RestrictedPlacementAsync(
+        HttpContext httpContext,
+        SettingsService settings,
+        ICurrentUserContext currentUser,
+        string path,
+        Guid? excludeRootId,
+        CancellationToken cancellationToken) {
+        var user = httpContext.GetCurrentUser();
+        if (user is null || user.Role == UserRole.Admin) {
+            return null;
+        }
+
+        var allowed = await currentUser.GetAllowedLibraryRootIdsAsync(cancellationToken);
+        return allowed is null
+            ? null
+            : await settings.EvaluateRestrictedLibraryRootPlacementAsync(
+                path, user.Id, allowed, user.AllowNsfw, excludeRootId, cancellationToken);
+    }
+
+    private static IResult LibraryPlacementForbidden() =>
+        Results.Json(
+            new ApiProblem(
+                ApiProblemCodes.AdminRequired,
+                "This folder overlaps a library you do not have access to."),
+            statusCode: StatusCodes.Status403Forbidden);
 
     private static IResult LibraryManagementForbidden() =>
         Results.Json(

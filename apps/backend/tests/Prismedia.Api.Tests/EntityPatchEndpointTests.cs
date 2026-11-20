@@ -13,6 +13,8 @@ using Prismedia.Domain.Entities;
 using Prismedia.Domain.Media;
 using Prismedia.Contracts.Entities;
 using Prismedia.Contracts.Plugins;
+using Prismedia.Contracts.Security;
+using Prismedia.Contracts.System;
 
 namespace Prismedia.Api.Tests;
 
@@ -86,6 +88,77 @@ public sealed class EntityPatchEndpointTests {
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("video", patcher.ExpectedKind);
+    }
+
+    [Theory]
+    [InlineData("/api/entities/{0}")]
+    [InlineData("/api/entities/video/{0}")]
+    public async Task MemberMetadataPatchOnNonCollectionIsForbidden(string route) {
+        using var factory = CreateMemberFactory();
+        using var client = await CreateMemberClientAsync(factory);
+
+        using var response = await client.PatchAsJsonAsync(string.Format(route, EntityId), Request("Member edit"));
+        var problem = await response.Content.ReadFromJsonAsync<ApiProblem>();
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(ApiProblemCodes.AdminRequired, problem!.Code);
+        Assert.Null(factory.Services.GetRequiredService<FakeEntityMetadataPatchService>().EntityId);
+    }
+
+    [Theory]
+    [InlineData("11111111-0000-0000-0000-00000000dead")]
+    [InlineData("11111111-0000-0000-0000-0000000005f0")]
+    public async Task MemberMetadataPatchOnHiddenEntityReadsAsMissing(string id) {
+        using var factory = CreateMemberFactory();
+        using var client = await CreateMemberClientAsync(factory);
+
+        using var response = await client.PatchAsJsonAsync($"/api/entities/{id}", Request("Member edit"));
+        var problem = await response.Content.ReadFromJsonAsync<ApiProblem>();
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(ApiProblemCodes.EntityNotFound, problem!.Code);
+        Assert.Null(factory.Services.GetRequiredService<FakeEntityMetadataPatchService>().EntityId);
+    }
+
+    [Fact]
+    public async Task MemberMetadataPatchOnVisibleCollectionDelegatesToOwnershipCheckedService() {
+        using var factory = CreateMemberFactory();
+        using var client = await CreateMemberClientAsync(factory);
+
+        using var response = await client.PatchAsJsonAsync(
+            $"/api/entities/{MemberReadService.CollectionId}",
+            Request("Renamed collection"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            MemberReadService.CollectionId,
+            factory.Services.GetRequiredService<FakeEntityMetadataPatchService>().EntityId);
+    }
+
+    [Fact]
+    public async Task MemberCollectionPatchCannotCarryArtworkOrNestedProposals() {
+        using var factory = CreateMemberFactory();
+        using var client = await CreateMemberClientAsync(factory);
+
+        using var response = await client.PatchAsJsonAsync(
+            $"/api/entities/{MemberReadService.CollectionId}",
+            Request("Renamed collection") with {
+                SelectedImages = new Dictionary<string, string?> { ["cover"] = "https://example.invalid/cover.jpg" }
+            });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Null(factory.Services.GetRequiredService<FakeEntityMetadataPatchService>().EntityId);
+    }
+
+    [Fact]
+    public async Task AdminMetadataPatchOnUntypedRouteStillApplies() {
+        using var factory = CreateMemberFactory();
+        using var client = factory.CreateAuthenticatedClient();
+
+        using var response = await client.PatchAsJsonAsync($"/api/entities/{EntityId}", Request("Admin edit"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(EntityId, factory.Services.GetRequiredService<FakeEntityMetadataPatchService>().EntityId);
     }
 
     [Fact]
@@ -323,6 +396,68 @@ public sealed class EntityPatchEndpointTests {
                 });
             })
             .WithTestAuth();
+
+    private static WebApplicationFactory<Program> CreateMemberFactory() =>
+        new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder => {
+                builder.ConfigureServices(services => {
+                    services.AddSingleton(new FakeEntityMetadataPatchService(EntityMetadataPatchResult.Applied));
+                    services.AddScoped<IEntityMetadataPatchService>(provider =>
+                        provider.GetRequiredService<FakeEntityMetadataPatchService>());
+                    services.AddScoped<IEntityReadService, MemberReadService>();
+                });
+            })
+            .WithTestAuth();
+
+    private static async Task<HttpClient> CreateMemberClientAsync(WebApplicationFactory<Program> factory) {
+        using var admin = factory.CreateAuthenticatedClient();
+        using var created = await admin.PostAsJsonAsync(
+            "/api/users",
+            new UserCreateRequest("patch-member", "member-password"),
+            CodecJson);
+        created.EnsureSuccessStatusCode();
+
+        var client = factory.CreateClient();
+        using var login = await client.PostAsJsonAsync(
+            "/api/auth/login",
+            new LoginRequest("patch-member", "member-password"));
+        var auth = await login.Content.ReadFromJsonAsync<LoginResponse>(CodecJson);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", auth!.AccessToken);
+        return client;
+    }
+
+    /// <summary>
+    /// Read stub modelling member visibility: one id is outside the member's libraries, one is
+    /// an NSFW collection hidden by the member's NSFW ceiling, and one is a visible collection.
+    /// </summary>
+    private sealed class MemberReadService : EntityReadServiceStub {
+        internal static readonly Guid CollectionId = Guid.Parse("11111111-0000-0000-0000-0000000000c0");
+        private static readonly Guid HiddenId = Guid.Parse("11111111-0000-0000-0000-00000000dead");
+        private static readonly Guid NsfwCollectionId = Guid.Parse("11111111-0000-0000-0000-0000000005f0");
+
+        public override Task<EntityCard?> GetAsync(Guid id, bool hideNsfw, CancellationToken cancellationToken) =>
+            Task.FromResult(Read(id, hideNsfw));
+
+        public override Task<EntityCard?> GetAsync(Guid id, string kind, bool hideNsfw, CancellationToken cancellationToken) =>
+            Task.FromResult(Read(id, hideNsfw));
+
+        private static EntityCard? Read(Guid id, bool hideNsfw) {
+            if (id == HiddenId || hideNsfw && id == NsfwCollectionId) {
+                return null;
+            }
+
+            return new EntityCard {
+                Id = id,
+                Kind = id == CollectionId || id == NsfwCollectionId ? EntityKind.Collection : EntityKind.Video,
+                Title = "Title",
+                ParentEntityId = null,
+                SortOrder = null,
+                Capabilities = [],
+                ChildrenByKind = [],
+                Relationships = []
+            };
+        }
+    }
 
     private static WebApplicationFactory<Program> CreateProgressFactory() =>
         new WebApplicationFactory<Program>()
