@@ -5,6 +5,7 @@ using Prismedia.Contracts.Entities;
 using Prismedia.Contracts.Media;
 using Prismedia.Contracts.Plugins;
 using Prismedia.Domain.Entities;
+using Prismedia.Infrastructure.Media.Artwork;
 using Prismedia.Infrastructure.Media.Processing;
 using Prismedia.Infrastructure.Persistence;
 using Prismedia.Infrastructure.Persistence.Entities;
@@ -15,15 +16,12 @@ namespace Prismedia.Infrastructure.Plugins;
 /// Downloads plugin artwork into the Prismedia cache and updates entity file rows.
 /// </summary>
 public sealed class PluginArtworkDownloader {
-    // A browser-like agent: many image CDNs reject generic/bot agents with 403.
-    private const string UserAgent =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     private const int MaxConcurrentArtworkDownloads = 8;
     private readonly PrismediaDbContext _db;
     private readonly PluginArtworkServiceOptions _options;
-    private readonly HttpClient _http;
+    private readonly RemoteArtworkFetcher _fetcher;
     private readonly HashSet<Guid> _artworkEntityIds = [];
-    private readonly Dictionary<string, byte[]?> _stagedDownloads = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RemoteArtworkImage?> _stagedDownloads = new(StringComparer.Ordinal);
     private readonly HashSet<string> _newArtworkPaths = new(FileSystemPathComparison.Comparer);
 
     public PluginArtworkDownloader(
@@ -32,10 +30,7 @@ public sealed class PluginArtworkDownloader {
         HttpClient? http = null) {
         _db = db;
         _options = options;
-        _http = http ?? new HttpClient();
-        if (!_http.DefaultRequestHeaders.UserAgent.Any()) {
-            _http.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
-        }
+        _fetcher = new RemoteArtworkFetcher(http);
     }
 
     /// <summary>
@@ -51,7 +46,7 @@ public sealed class PluginArtworkDownloader {
             .Select(url => url!)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        var downloads = new byte[]?[distinctUrls.Length];
+        var downloads = new RemoteArtworkImage?[distinctUrls.Length];
 
         await Parallel.ForEachAsync(
             Enumerable.Range(0, distinctUrls.Length),
@@ -107,12 +102,12 @@ public sealed class PluginArtworkDownloader {
             }
 
             // A single unreachable or blocked image (e.g. a CDN 403) must not fail the whole apply.
-            var bytes = await TryDownloadAsync(url, cancellationToken);
-            if (bytes is null) {
+            var image = await TryDownloadAsync(url, cancellationToken);
+            if (image is null) {
                 continue;
             }
 
-            await UpsertArtworkAsync(entityId, role, roleCode, url, bytes, now, cancellationToken);
+            await UpsertArtworkAsync(entityId, role, url, image, now, cancellationToken);
         }
     }
 
@@ -125,19 +120,12 @@ public sealed class PluginArtworkDownloader {
         EntityFileRole role,
         DateTimeOffset now,
         CancellationToken cancellationToken) {
-        var bytes = await TryDownloadAsync(image.Url, cancellationToken);
-        if (bytes is null) {
+        var downloaded = await TryDownloadAsync(image.Url, cancellationToken);
+        if (downloaded is null) {
             return;
         }
 
-        await UpsertArtworkAsync(
-            entity.Id,
-            role,
-            role.ToString().ToLowerInvariant(),
-            image.Url,
-            bytes,
-            now,
-            cancellationToken);
+        await UpsertArtworkAsync(entity.Id, role, image.Url, downloaded, now, cancellationToken);
         entity.UpdatedAt = now;
     }
 
@@ -153,10 +141,11 @@ public sealed class PluginArtworkDownloader {
     }
 
     /// <summary>
-    /// Fetches remote artwork bytes, returning null when the image is unreachable, blocked, or times
-    /// out so callers can skip it without aborting the surrounding metadata apply.
+    /// Fetches remote artwork, returning null when the image is not an allowed remote URL, unreachable,
+    /// blocked, too large, not a supported image, or times out so callers can skip it without aborting the
+    /// surrounding metadata apply.
     /// </summary>
-    private async Task<byte[]?> TryDownloadAsync(string url, CancellationToken cancellationToken) {
+    private async Task<RemoteArtworkImage?> TryDownloadAsync(string url, CancellationToken cancellationToken) {
         if (_stagedDownloads.TryGetValue(url, out var staged)) {
             return staged;
         }
@@ -164,34 +153,27 @@ public sealed class PluginArtworkDownloader {
         return await TryDownloadRemoteAsync(url, cancellationToken);
     }
 
-    private async Task<byte[]?> TryDownloadRemoteAsync(string url, CancellationToken cancellationToken) {
-        try {
-            return await _http.GetByteArrayAsync(url, cancellationToken);
-        } catch (HttpRequestException) {
-            return null;
-        } catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) {
-            return null;
-        } catch (InvalidOperationException) {
-            return null;
-        } catch (UriFormatException) {
-            return null;
-        }
-    }
+    private Task<RemoteArtworkImage?> TryDownloadRemoteAsync(string url, CancellationToken cancellationToken) =>
+        _fetcher.TryFetchAsync(url, cancellationToken);
 
     private async Task UpsertArtworkAsync(
         Guid entityId,
         EntityFileRole role,
-        string roleCode,
         string url,
-        byte[] bytes,
+        RemoteArtworkImage image,
         DateTimeOffset now,
         CancellationToken cancellationToken) {
-        var ext = ExtensionFromUrl(url);
-        var relativePath = Path.Combine("plugins", "artwork", entityId.ToString(), $"{roleCode}-{ShortHash(url)}{ext}");
+        // The extension (and therefore the served content type) comes from the sniffed content, never the URL.
+        var ext = image.Format.Extension;
+        var relativePath = Path.Combine(
+            "plugins",
+            "artwork",
+            entityId.ToString(),
+            $"{role.ToCode()}-{ShortHash(url)}{ext}");
         var physicalPath = Path.Combine(_options.CacheRoot, relativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(physicalPath)!);
         var createdByThisApply = !File.Exists(physicalPath);
-        await File.WriteAllBytesAsync(physicalPath, bytes, cancellationToken);
+        await File.WriteAllBytesAsync(physicalPath, image.Bytes, cancellationToken);
         if (createdByThisApply) {
             _newArtworkPaths.Add(physicalPath);
         }
@@ -205,14 +187,14 @@ public sealed class PluginArtworkDownloader {
                 EntityId = entityId,
                 Role = role,
                 Path = publicPath,
-                MimeType = MimeTypeFromExtension(ext),
+                MimeType = image.Format.ContentType,
                 Source = FileSourceKind.Custom.ToCode(),
                 CreatedAt = now,
                 UpdatedAt = now
             });
         } else {
             existing.Path = publicPath;
-            existing.MimeType = MimeTypeFromExtension(ext);
+            existing.MimeType = image.Format.ContentType;
             existing.Source = FileSourceKind.Custom.ToCode();
             existing.UpdatedAt = now;
         }
@@ -224,18 +206,4 @@ public sealed class PluginArtworkDownloader {
 
     private static string ShortHash(string value) =>
         Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)))[..12].ToLowerInvariant();
-
-    private static string ExtensionFromUrl(string url) {
-        var path = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.AbsolutePath : url;
-        var ext = Path.GetExtension(path);
-        return string.IsNullOrWhiteSpace(ext) ? ".jpg" : ext.ToLowerInvariant();
-    }
-
-    private static string? MimeTypeFromExtension(string ext) =>
-        ext.ToLowerInvariant() switch {
-            ".jpg" or ".jpeg" => MediaContentTypes.ImageJpeg,
-            ".png" => MediaContentTypes.ImagePng,
-            ".webp" => MediaContentTypes.ImageWebp,
-            _ => null
-        };
 }

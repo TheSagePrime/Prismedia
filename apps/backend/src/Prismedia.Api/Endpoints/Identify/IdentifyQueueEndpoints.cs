@@ -1,3 +1,4 @@
+using Prismedia.Application.Artwork;
 using Prismedia.Application.Entities;
 using Prismedia.Application.Plugins;
 using Prismedia.Contracts.Entities;
@@ -142,6 +143,12 @@ internal static class IdentifyQueueEndpoints {
             ApplyIdentifyQueueItemRequest request,
             IIdentifyQueueService queue,
             CancellationToken cancellationToken) => {
+                if (!RemoteArtworkUrl.AllAllowed([request.Proposal], request.SelectedImages)) {
+                    return Results.BadRequest(new ApiProblem(
+                        ApiProblemCodes.IdentifyQueueApplyInvalid,
+                        "Artwork must be an absolute http or https URL."));
+                }
+
                 try {
                     return Results.Ok(await queue.ApplyAsync(entityId, request, cancellationToken));
                 } catch (IdentifyTargetNotEligibleException ex) {

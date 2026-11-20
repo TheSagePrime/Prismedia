@@ -14,6 +14,9 @@ using DomainEntityExternalId = Prismedia.Domain.Entities.EntityExternalId;
 namespace Prismedia.Infrastructure.Tests;
 
 public sealed class EntityMetadataApplyServiceTests {
+    // Minimal JPEG signature: downloaded artwork must sniff as a supported image to be cached.
+    private static readonly byte[] JpegBytes = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+
     [Fact]
     public async Task ProviderCannotRetireAnIdentityOutsideItsDeclaredRoute() {
         await using var db = CreateContext();
@@ -2777,7 +2780,7 @@ public sealed class EntityMetadataApplyServiceTests {
     private sealed class FixedImageHandler : HttpMessageHandler {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                Content = new ByteArrayContent([1, 2, 3])
+                Content = new ByteArrayContent(JpegBytes)
             });
     }
 
@@ -2790,7 +2793,7 @@ public sealed class EntityMetadataApplyServiceTests {
             }
 
             return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                Content = new ByteArrayContent([1, 2, 3])
+                Content = new ByteArrayContent(JpegBytes)
             });
         }
     }
@@ -2805,7 +2808,7 @@ public sealed class EntityMetadataApplyServiceTests {
             WasCalled = true;
             ObservedInsideLease |= insideLease();
             return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                Content = new ByteArrayContent([1, 2, 3])
+                Content = new ByteArrayContent(JpegBytes)
             });
         }
     }
@@ -2832,7 +2835,7 @@ public sealed class EntityMetadataApplyServiceTests {
             try {
                 await Task.Delay(40, cancellationToken);
                 return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                    Content = new ByteArrayContent([1, 2, 3])
+                    Content = new ByteArrayContent(JpegBytes)
                 };
             } finally {
                 Interlocked.Decrement(ref _active);

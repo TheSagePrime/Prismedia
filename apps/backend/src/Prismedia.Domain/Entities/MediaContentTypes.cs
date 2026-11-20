@@ -37,6 +37,9 @@ public static class MediaContentTypes {
     /// <summary>Animated PNG image.</summary>
     public const string ImageApng = "image/apng";
 
+    /// <summary>Windows bitmap image.</summary>
+    public const string ImageBmp = "image/bmp";
+
     // ── Video ───────────────────────────────────────────────────────────
     /// <summary>MP4 / fragmented MP4 video.</summary>
     public const string VideoMp4 = "video/mp4";

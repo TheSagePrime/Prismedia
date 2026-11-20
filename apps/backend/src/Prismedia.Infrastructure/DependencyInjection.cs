@@ -57,6 +57,8 @@ using Prismedia.Infrastructure.Health;
 using Prismedia.Infrastructure.Videos;
 using Prismedia.Infrastructure.Subtitles;
 
+using Prismedia.Infrastructure.Security.Outbound;
+
 namespace Prismedia.Infrastructure;
 
 public static class DependencyInjection {
@@ -626,7 +628,9 @@ public static class DependencyInjection {
         // No auto-redirect: the resolver validates the destination host is public before fetching, and a
         // redirect could hop to a private address that bypasses that check (SSRF defense for the LAN host).
         services.AddScoped<IReleaseLinkResolver>(_ => new ReleaseLinkResolver(
-            new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(20) }));
+            new HttpClient(GuardedHttpHandlerFactory.Create(OutboundNetworkScope.PublicOnly)) {
+                Timeout = TimeSpan.FromSeconds(20)
+            }));
     }
 
     private static void RegisterThumbnailContributors(IServiceCollection services) {

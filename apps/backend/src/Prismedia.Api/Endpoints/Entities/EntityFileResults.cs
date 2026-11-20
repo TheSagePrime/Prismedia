@@ -23,6 +23,11 @@ internal static class EntityFileResults {
         Func<IResult> notFound,
         CancellationToken cancellationToken,
         string? fileDownloadName = null) {
+        // Remote artwork references (http/https) are rendered by the browser; they are never local files.
+        if (IsRemoteReference(path)) {
+            return notFound();
+        }
+
         if (TrySplitArchiveEntry(path, out var archivePath, out var memberPath)) {
             var archiveStream = await OpenArchiveEntryAsync(archivePath, memberPath, cancellationToken);
             return archiveStream is null
@@ -59,6 +64,10 @@ internal static class EntityFileResults {
                 enableRangeProcessing: true),
             FileCacheControl);
     }
+
+    private static bool IsRemoteReference(string path) =>
+        Uri.TryCreate(path, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     /// <summary>Decorates an inner file result with a Cache-Control header.</summary>
     private sealed class CachedResult(IResult inner, string cacheControl) : IResult {

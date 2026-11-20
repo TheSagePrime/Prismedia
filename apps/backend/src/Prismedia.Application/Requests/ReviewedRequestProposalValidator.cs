@@ -1,3 +1,4 @@
+using Prismedia.Application.Artwork;
 using Prismedia.Contracts.Plugins;
 using Prismedia.Contracts.Requests;
 using Prismedia.Domain.Entities;
@@ -44,6 +45,7 @@ internal static class ReviewedRequestProposalValidator {
         var selectedImages = selectedProposal.Images ?? [];
         foreach (var (kind, url) in request.SelectedImages) {
             if (string.IsNullOrWhiteSpace(kind)
+                || !RemoteArtworkUrl.IsAllowedOrBlank(url)
                 || url is not null && !selectedImages.Any(image =>
                     string.Equals(image.Kind, kind, StringComparison.Ordinal)
                     && string.Equals(image.Url, url, StringComparison.Ordinal))) {
@@ -64,6 +66,10 @@ internal static class ReviewedRequestProposalValidator {
         }
 
         ValidateFilteredPatch(reviewed.Patch, selected.Patch);
+        // The review is client-submitted, so subset checks alone cannot vouch for artwork references.
+        if (!(selected.Images ?? []).All(image => RemoteArtworkUrl.IsAllowedOrBlank(image?.Url))) {
+            throw new RequestCommitValidationException("Selected artwork must be an absolute http or https URL.");
+        }
         ValidateSubset(reviewed.Images ?? [], selected.Images ?? [], "artwork");
         ValidateNodes(reviewed, selected);
     }

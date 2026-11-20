@@ -45,6 +45,22 @@ public sealed class EntityPatchEndpointTests {
     }
 
     [Fact]
+    public async Task EntityPatchRejectsNonHttpSelectedArtwork() {
+        using var factory = CreateFactory(EntityMetadataPatchResult.Applied);
+        using var client = factory.CreateAuthenticatedClient();
+
+        using var response = await client.PatchAsJsonAsync(
+            $"/api/entities/{EntityId}",
+            Request("Local Artwork") with {
+                SelectedImages = new Dictionary<string, string?> { ["poster"] = "/var/lib/secret.jpg" }
+            });
+        var patcher = factory.Services.GetRequiredService<FakeEntityMetadataPatchService>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Null(patcher.EntityId);
+    }
+
+    [Fact]
     public async Task KindGuardedEntityPatchReturnsNotFoundForKindMismatch() {
         using var factory = CreateFactory(EntityMetadataPatchResult.KindMismatch);
         using var client = factory.CreateAuthenticatedClient();

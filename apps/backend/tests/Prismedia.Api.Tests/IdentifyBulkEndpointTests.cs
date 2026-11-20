@@ -124,6 +124,24 @@ public sealed class IdentifyBulkEndpointTests {
         Assert.Equal(ApiProblemCodes.EntityNotFound, problem?.Code);
     }
 
+    [Fact]
+    public async Task ApplyIdentifyProposalRejectsNonHttpArtwork() {
+        using var factory = CreateFactory();
+        using var client = factory.CreateAuthenticatedClient();
+        var entityId = Guid.NewGuid();
+        factory.Services.GetRequiredService<RecordingIdentifyProviderService>().ExistingEntityId = entityId;
+        var proposal = CreateProposal(entityId) with {
+            Images = [new ImageCandidate("poster", "file:///var/lib/secret.jpg", "tmdb", null, null, null, null)]
+        };
+
+        using var response = await client.PostAsJsonAsync(
+            $"/api/identify/entities/{entityId}/apply",
+            new ApplyIdentifyProposalRequest(proposal, [], null),
+            CodecJson);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private static WebApplicationFactory<Program> CreateFactory() =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder => {

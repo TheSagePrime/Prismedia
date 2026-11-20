@@ -530,6 +530,30 @@ public sealed class WantedEntityWriterTests {
         Assert.All(artwork, file => Assert.Equal(FileSourceKind.Custom.ToCode(), file.Source));
     }
 
+    [Theory]
+    [InlineData("/var/lib/secret.jpg")]
+    [InlineData("file:///var/lib/secret.jpg")]
+    [InlineData("relative/poster.jpg")]
+    [InlineData("data:image/png;base64,AAAA")]
+    public async Task DeferredArtworkApplyNeverPersistsNonHttpReferences(string reference) {
+        await using var db = CreateContext();
+        var artistId = AddEntity(db, EntityKind.MusicArtist.ToCode(), "Local Path Artist", isWanted: true);
+        await db.SaveChangesAsync();
+        var proposal = MetadataProposal(
+            "artist",
+            EntityKind.MusicArtist,
+            "Local Path Artist",
+            artistId,
+            new ImageCandidate(MediaImageKind.Poster.ToCode(), reference, "musicbrainz", 1, null, null, null),
+            new ImageCandidate(MediaImageKind.Backdrop.ToCode(), "https://images.test/backdrop.jpg", "musicbrainz", 1, null, null, null));
+
+        await Writer(db).ApplyProposalWithDeferredArtworkAsync(artistId, proposal, CancellationToken.None);
+
+        var artwork = await db.EntityFiles.AsNoTracking().Where(file => file.EntityId == artistId).ToArrayAsync();
+        var stored = Assert.Single(artwork);
+        Assert.Equal("https://images.test/backdrop.jpg", stored.Path);
+    }
+
     [Fact]
     public async Task DeferredArtworkApplyPersistsManagerPersonIdentityRoleAndHeadshot() {
         await using var db = CreateContext();
