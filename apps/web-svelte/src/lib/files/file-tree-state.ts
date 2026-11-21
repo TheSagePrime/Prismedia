@@ -87,7 +87,8 @@ export function reconcileFileTreeEntries(
     .map((treePath) => registry.get(treePath))
     .filter((meta): meta is FileTreeNodeMeta => Boolean(meta))
     .filter((meta) => meta.rootId === directory.rootId)
-    .filter((meta) => parentPath(meta.path) === directory.path)
+    // A library root's path is "", which is also its own parent path; it is never its own child.
+    .filter((meta) => meta.path !== "" && parentPath(meta.path) === directory.path)
     .filter((meta) => !nextEntryPaths.has(meta.path));
   const removedSubtrees = removedChildren.map((meta) => meta.treePath);
   const removedPaths = removedChildren.map((meta) => meta.path);

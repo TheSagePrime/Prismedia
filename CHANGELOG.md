@@ -224,6 +224,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Added opt-in trusted reverse-proxy support with `PRISMEDIA_TRUSTED_PROXIES`.
 - Files uploads accept large video files instead of stopping at the default request size.
 - Dropping a large folder onto Files uploads every file in it, including folders with more than 100 items, instead of silently uploading only the first batch.
+- Refreshing a library root in Files, or uploading into it, no longer makes the root disappear from the folder tree.
 
 - Gallery, series, season, album, artist, author, book, and comic pages list every item again instead of stopping at the first 250 of each kind. Next and previous in the reader, and Identify reviews of large series, include every item too.
 

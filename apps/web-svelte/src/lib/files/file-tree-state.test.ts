@@ -110,6 +110,24 @@ describe("file tree state", () => {
     expect(result.treePaths).not.toContain(`${rootTreePath}Videos/Friendship (2025)/folder.jpg`);
     expect(result.loadedKeys.has(`${root.id}:Videos/Friendship (2025)`)).toBe(false);
   });
+
+  it("keeps the library root when its own children are refreshed", () => {
+    const registry = createFileTreeRegistry([root]);
+    const rootTreePath = `${fileTreeRootPath(root)}/`;
+    const [oldFile] = upsertFileTreeEntries(registry, rootTreePath, [entry("old.mp4", "old.mp4", "file")]);
+
+    const result = reconcileFileTreeEntries(
+      registry,
+      [rootTreePath, oldFile],
+      new Set([`${root.id}:`]),
+      rootTreePath,
+      registry.get(rootTreePath)!,
+      [entry("new.mp4", "new.mp4", "file")],
+    );
+
+    expect(result.treePaths).toEqual([rootTreePath, `${rootTreePath}new.mp4`]);
+    expect(registry.has(rootTreePath)).toBe(true);
+  });
 });
 
 function entry(path: string, name: string, kind: "directory" | "file"): FileEntry {
