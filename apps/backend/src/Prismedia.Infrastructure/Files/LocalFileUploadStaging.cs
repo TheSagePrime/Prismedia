@@ -31,7 +31,14 @@ public sealed class LocalFileUploadStaging(ILibraryFileMutationGuard mutations) 
         await using var protection = await mutations.EnterAsync([directory], cancellationToken);
         EnsureSafeStagingDirectory(root, create: true);
         var data = DataPath(root, record.Id);
-        await using (new FileStream(data, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
+        try {
+            await using (new FileStream(data, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
+            }
+        } catch (DirectoryNotFoundException) {
+            // Cleanup removed the empty staging folder between the check and the write; recreate it once.
+            EnsureSafeStagingDirectory(root, create: true);
+            await using (new FileStream(data, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
+            }
         }
 
         await File.WriteAllTextAsync(
