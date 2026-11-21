@@ -36,6 +36,7 @@
     type FileTreeNodeMeta,
     upsertFileTreeEntries,
   } from "$lib/files/file-tree-state";
+  import { collectDroppedFiles } from "$lib/files/dropped-files";
   import { useNsfw } from "$lib/nsfw/store.svelte";
 
   interface PendingNameDialog {
@@ -439,56 +440,6 @@
     const files = input.files;
     input.value = "";
     if (target) uploadFileList(files, target);
-  }
-
-  async function collectDroppedFiles(dataTransfer: DataTransfer | null): Promise<FileUploadItem[]> {
-    if (!dataTransfer) return [];
-    const items = [...dataTransfer.items].filter((item) => item.kind === "file");
-    const collected = await Promise.all(items.map(async (item) => {
-      const entry = "webkitGetAsEntry" in item
-        ? (item as DataTransferItem & { webkitGetAsEntry: () => FileSystemEntry | null }).webkitGetAsEntry()
-        : null;
-      if (entry) return traverseEntry(entry, "");
-      const file = item.getAsFile();
-      return file ? [{ file, relativePath: file.name }] : [];
-    }));
-    const flattened = collected.flat();
-    return flattened.length
-      ? flattened
-      : Array.from(dataTransfer.files).map((file) => ({ file, relativePath: file.name }));
-  }
-
-  interface FileSystemEntry {
-    isFile: boolean;
-    isDirectory: boolean;
-    name: string;
-  }
-
-  interface FileSystemFileEntry extends FileSystemEntry {
-    file: (success: (file: File) => void, error?: (error: DOMException) => void) => void;
-  }
-
-  interface FileSystemDirectoryEntry extends FileSystemEntry {
-    createReader: () => {
-      readEntries: (success: (entries: FileSystemEntry[]) => void, error?: (error: DOMException) => void) => void;
-    };
-  }
-
-  async function traverseEntry(entry: FileSystemEntry, basePath: string): Promise<FileUploadItem[]> {
-    const relativePath = [basePath, entry.name].filter(Boolean).join("/");
-    if (entry.isFile) {
-      const file = await new Promise<File>((resolve, reject) => {
-        (entry as FileSystemFileEntry).file(resolve, reject);
-      });
-      return [{ file, relativePath }];
-    }
-    if (!entry.isDirectory) return [];
-    const reader = (entry as FileSystemDirectoryEntry).createReader();
-    const entries = await new Promise<FileSystemEntry[]>((resolve, reject) => {
-      reader.readEntries(resolve, reject);
-    });
-    const nested = await Promise.all(entries.map((child) => traverseEntry(child, relativePath)));
-    return nested.flat();
   }
 
   async function handleExternalDrop(dataTransfer: DataTransfer | null): Promise<void> {
