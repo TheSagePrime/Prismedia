@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Docs
 
+- Documented resumable Files uploads, the conflict choice, multi-select moves and deletes, the disk space uploads need, uploading from iPhone, and the server cost of playing HEVC iPhone videos in browsers that cannot decode them.
+
 - Documented connecting Suwayomi OPDS catalogs to browse and import already downloaded CBZ chapters, including authentication and reading-progress settings.
 
 - Documented the executor protocol for durable jobs, sealed output manifests, retained artifacts, and independently retryable import acknowledgements.
