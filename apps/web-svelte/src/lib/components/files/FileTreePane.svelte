@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { Upload } from "@lucide/svelte";
+  import { ListChecks, Upload, X } from "@lucide/svelte";
   import { Button, TextInput } from "@prismedia/ui-svelte";
   import { onMount } from "svelte";
+  import BulkSelectionBar from "$lib/components/entities/BulkSelectionBar.svelte";
+  import type { EntityGridBulkAction } from "$lib/entities/entity-grid";
   import { FILE_ENTRY_KIND } from "$lib/api/generated/codes";
   import type { ContextMenuItem, ContextMenuOpenContext, FileTree, FileTreeDirectoryHandle } from "@pierre/trees";
   import type { FileActionId } from "$lib/files/file-actions";
@@ -24,6 +26,18 @@
     onRename?: (treePath: string, newName: string) => void;
     /** Whether the browser can pick whole folders (not on iPhone or iPad). */
     canPickFolders?: boolean;
+    /** Tap-to-select mode for touch screens; Ctrl/Cmd- and Shift-click select without it. */
+    selectionActive?: boolean;
+    selectedCount?: number;
+    selectedPaths?: string[];
+    bulkActions?: EntityGridBulkAction[];
+    /** Outcome of the last bulk operation, shown under the selection bar. */
+    notice?: { tone: "success" | "warning" | "error"; message: string } | null;
+    onSelectionChange?: (treePaths: string[]) => void;
+    onSelectionActiveChange?: (active: boolean) => void;
+    onSelectAllVisible?: () => void;
+    onMoveMany?: (sourceTreePaths: string[], targetDirectoryTreePath: string | null) => void;
+    onDismissNotice?: () => void;
   }
 
   let {
@@ -40,7 +54,30 @@
     onAction,
     onRename,
     canPickFolders = false,
+    selectionActive = false,
+    selectedCount = 0,
+    selectedPaths = [],
+    bulkActions = [],
+    notice = null,
+    onSelectionChange,
+    onSelectionActiveChange,
+    onSelectAllVisible,
+    onMoveMany,
+    onDismissNotice,
   }: Props = $props();
+
+  /** Replaces the tree's selection, used by Select all and Clear. */
+  export function setSelection(treePaths: readonly string[]): void {
+    if (!tree) return;
+    const wanted = new Set(treePaths);
+    suppressSelectionEvent = true;
+    for (const path of tree.getSelectedPaths()) {
+      if (!wanted.has(path)) tree.getItem(path)?.deselect();
+    }
+    for (const path of wanted) tree.getItem(path)?.select();
+    suppressSelectionEvent = false;
+    onSelectionChange?.([...tree.getSelectedPaths()]);
+  }
 
   /** Upload target for the toolbar button: the selected entry's folder, or the first library root. */
   const uploadTreePath = $derived(
@@ -170,7 +207,25 @@
         target instanceof HTMLElement && target.matches("button[data-type='item']"),
       );
     const treePath = row?.dataset.itemPath;
-    if (treePath) onSelect?.(treePath);
+    if (!treePath || selectionActive || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    onSelect?.(treePath);
+  }
+
+  /**
+   * In selection mode a tap toggles the row instead of opening it, so touch screens can build a
+   * multi-selection without modifier keys. The row menu button keeps working.
+   */
+  function interceptSelectionTap(event: MouseEvent): void {
+    if (!selectionActive || !tree) return;
+    const path = event.composedPath();
+    if (path.some((target) => target instanceof HTMLElement && target.hasAttribute("data-context-menu-trigger"))) return;
+    const row = path.find((target): target is HTMLElement =>
+      target instanceof HTMLElement && target.matches("button[data-type='item']"));
+    const treePath = row?.dataset.itemPath;
+    if (!treePath || registry.get(treePath)?.path === "") return;
+    event.preventDefault();
+    event.stopPropagation();
+    tree.getItem(treePath)?.toggleSelect();
   }
 
   const treeCSS = `
@@ -269,9 +324,13 @@
       icons: { set: "complete", colored: true },
       search: false,
       dragAndDrop: {
-        canDrag: (draggedPaths) => draggedPaths.length === 1,
+        // Library roots stay put; any other selection can be dragged together.
+        canDrag: (draggedPaths) => draggedPaths.length > 0 && draggedPaths.every((path) => registry.get(path)?.path !== ""),
         canDrop: () => true,
-        onDropComplete: (event) => onMove?.(event.draggedPaths[0], event.target.directoryPath),
+        onDropComplete: (event) => {
+          if (event.draggedPaths.length === 1) onMove?.(event.draggedPaths[0], event.target.directoryPath);
+          else onMoveMany?.([...event.draggedPaths], event.target.directoryPath);
+        },
       },
       renaming: {
         canRename: () => true,
@@ -287,14 +346,19 @@
       },
       onSelectionChange: (selectedPaths) => {
         if (suppressSelectionEvent) return;
-        const next = selectedPaths[0];
-        if (next) onSelect?.(next);
+        onSelectionChange?.([...selectedPaths]);
+        if (selectionActive || selectedPaths.length !== 1) return;
+        onSelect?.(selectedPaths[0]);
       },
       unsafeCSS: treeCSS,
     });
     tree.render({ containerWrapper: host });
+    host.addEventListener("click", interceptSelectionTap, { capture: true });
     host.addEventListener("click", bridgeRowClick);
-    removeTreeClickBridge = () => host.removeEventListener("click", bridgeRowClick);
+    removeTreeClickBridge = () => {
+      host.removeEventListener("click", interceptSelectionTap, { capture: true });
+      host.removeEventListener("click", bridgeRowClick);
+    };
     unsubscribe = tree.subscribe(checkLazyExpansion);
     checkLazyExpansion();
     syncExcludedRows();
@@ -354,7 +418,7 @@
   });
 
   $effect(() => {
-    if (!tree || !selectedPath) return;
+    if (!tree || !selectedPath || selectionActive || selectedPaths.length > 1) return;
     const item = tree.getItem(selectedPath);
     if (!item?.isSelected()) {
       suppressSelectionEvent = true;
@@ -387,15 +451,48 @@
     >
       <Upload class="h-3.5 w-3.5" />Upload
     </Button>
+    {#if !selectionActive && selectedCount <= 1}
+      <Button
+        variant="ghost"
+        size="sm"
+        type="button"
+        class="shrink-0"
+        aria-label="Select several items"
+        onclick={() => onSelectionActiveChange?.(true)}
+      >
+        <ListChecks class="h-3.5 w-3.5" />Select
+      </Button>
+    {/if}
   </div>
+  {#if selectionActive || selectedCount > 1}
+    <BulkSelectionBar
+      variant="track-list"
+      {selectedCount}
+      selectedIds={selectedPaths}
+      selectionActive={selectionActive || selectedCount > 1}
+      showNsfwAction={false}
+      {bulkActions}
+      onSelectionActiveChange={(active) => onSelectionActiveChange?.(active)}
+      onSelectAllVisible={() => onSelectAllVisible?.()}
+      onClearSelection={() => setSelection([])}
+    />
+  {/if}
+  {#if notice}
+    <div class="bulk-notice" data-tone={notice.tone} role="status">
+      <p>{notice.message}</p>
+      <Button variant="ghost" size="icon-sm" type="button" aria-label="Dismiss" onclick={() => onDismissNotice?.()}>
+        <X class="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  {/if}
   <div class="tree-host" bind:this={host} aria-busy={loading}></div>
 </section>
 
 <style>
   .files-tree-pane {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     min-height: 0;
-    grid-template-rows: auto 1fr;
     border-right: 1px solid var(--color-border-subtle);
     background: var(--color-surface-1);
   }
@@ -411,9 +508,36 @@
 
 
 
+  .bulk-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--color-border-subtle);
+    border-left: 2px solid var(--color-border-accent);
+    padding: 0.5rem 0.75rem;
+    color: var(--color-text-secondary);
+    font: 500 0.75rem/1.4 var(--font-inter, Inter), sans-serif;
+  }
+
+  .bulk-notice p {
+    flex: 1;
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .bulk-notice[data-tone="warning"] {
+    border-left-color: var(--color-warning-text);
+  }
+
+  .bulk-notice[data-tone="error"] {
+    border-left-color: var(--color-error-text);
+    color: var(--color-error-text);
+  }
+
   .tree-host {
+    flex: 1 1 0;
     min-height: 0;
-    height: 100%;
   }
 
   .tree-host :global(*:focus),

@@ -4,6 +4,7 @@
   import { page } from "$app/state";
   import FileDetailPane from "$lib/components/files/FileDetailPane.svelte";
   import FileDownloadStatus from "$lib/components/files/FileDownloadStatus.svelte";
+  import FileMoveDialog from "$lib/components/files/FileMoveDialog.svelte";
   import FileTreePane from "$lib/components/files/FileTreePane.svelte";
   import FileUploadDialog from "$lib/components/files/FileUploadDialog.svelte";
   import FileUploadPanel from "$lib/components/files/FileUploadPanel.svelte";
@@ -45,6 +46,8 @@
   import { collectDroppedFiles, fileListToUploadItems } from "$lib/files/dropped-files";
   import { UploadQueue, type UploadQueueSnapshot } from "$lib/files/upload-queue";
   import { MEDIA_PICKER_ACCEPT, supportsFolderPicker } from "$lib/files/upload-pickers";
+  import { planBulkMove, runBulkOperation, summarizeBulkResult, topLevelSelection } from "$lib/files/bulk-operations";
+  import type { EntityGridBulkAction } from "$lib/entities/entity-grid";
   import { useNsfw } from "$lib/nsfw/store.svelte";
 
   interface PendingNameDialog {
@@ -520,6 +523,117 @@
     if (target) uploadItems(items, target);
   }
 
+  // ── Multi-select and bulk operations ─────────────────────────────
+  let treePane = $state<{ setSelection: (treePaths: readonly string[]) => void } | null>(null);
+  let selectionActive = $state(false);
+  let selectedTreePaths = $state<string[]>([]);
+  let bulkNotice = $state<{ tone: "success" | "warning" | "error"; message: string } | null>(null);
+  let moveDialogOpen = $state(false);
+
+  const selectedMetas = $derived(
+    selectedTreePaths.map((treePath) => registry.get(treePath)).filter((meta): meta is FileTreeNodeMeta => Boolean(meta)),
+  );
+  const writableSelection = $derived(topLevelSelection(selectedMetas.filter((meta) => !meta.isReadOnly)));
+  const moveTargets = $derived(
+    [...registry.values()]
+      .filter((meta) => meta.kind === FILE_ENTRY_KIND.directory && !meta.isReadOnly)
+      .map((meta) => ({ value: meta.treePath, label: meta.treePath.replace(/\/$/, "") }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  );
+  const bulkActions: EntityGridBulkAction[] = [
+    {
+      id: "move",
+      label: "Move to…",
+      isAvailable: () => writableSelection.length > 0,
+      onRun: () => (moveDialogOpen = true),
+    },
+    {
+      id: "delete",
+      label: "Delete permanently",
+      tone: "danger",
+      isAvailable: () => writableSelection.length > 0,
+      onRun: () => confirmBulkDelete(),
+    },
+  ];
+
+  function setSelectionActive(active: boolean): void {
+    selectionActive = active;
+    // Entering or leaving selection mode starts from an empty selection, so the folder that was
+    // open is not silently part of the bulk action.
+    treePane?.setSelection([]);
+  }
+
+  /** Library roots cannot be moved or deleted, so they never count toward a multi-selection. */
+  function updateSelection(treePaths: string[]): void {
+    selectedTreePaths = treePaths.filter((treePath) => registry.get(treePath)?.path !== "");
+  }
+
+  /** Selects every loaded entry in the folder of the current selection (or the selected folder). */
+  function selectAllInFolder(): void {
+    const anchor = selectedMetas[0] ?? selectedMeta;
+    const folder = anchor?.kind === FILE_ENTRY_KIND.directory && selectedMetas.length === 0 ? anchor : directoryTarget(anchor ?? null);
+    if (!folder) return;
+    treePane?.setSelection([...registry.values()]
+      .filter((meta) => meta.rootId === folder.rootId && meta.path !== "" && parentPath(meta.path) === folder.path)
+      .map((meta) => meta.treePath));
+  }
+
+  async function finishBulk(notice: { tone: "success" | "warning" | "error"; message: string }): Promise<void> {
+    bulkNotice = notice;
+    treePane?.setSelection([]);
+    selectionActive = false;
+    selectedTreePath = null;
+    detail = null;
+    await loadRoots();
+  }
+
+  /** Moves several entries into one folder, one at a time, then reports what happened. */
+  async function moveMany(
+    sourceTreePaths: string[],
+    targetTreePath: string | null,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<void> {
+    const target = targetTreePath ? registry.get(targetTreePath) : null;
+    if (!target || target.kind !== FILE_ENTRY_KIND.directory) return;
+    if (target.isReadOnly) { error = "Externally managed library files cannot be moved here."; return; }
+    const sources = sourceTreePaths.map((path) => registry.get(path)).filter((meta): meta is FileTreeNodeMeta => Boolean(meta));
+    const readOnly = sources.filter((meta) => meta.isReadOnly).map((item) => ({ item, reason: "read-only library" }));
+    const { moves, skipped } = planBulkMove(sources.filter((meta) => !meta.isReadOnly), target);
+    const result = await runBulkOperation(
+      moves,
+      (move) => apiMoveFile({
+        sourceRootId: move.item.rootId,
+        sourcePath: move.item.path,
+        targetRootId: move.targetRootId,
+        targetPath: move.targetPath,
+      }),
+      onProgress,
+    );
+    await finishBulk(summarizeBulkResult(
+      "Moved",
+      { succeeded: result.succeeded.map((move) => move.item), failed: result.failed.map(({ item, message }) => ({ item: item.item, message })) },
+      [...readOnly, ...skipped],
+    ));
+  }
+
+  function confirmBulkDelete(): void {
+    const items = writableSelection;
+    if (items.length === 0) return;
+    const folders = items.filter((meta) => meta.kind === FILE_ENTRY_KIND.directory).length;
+    pendingConfirmation = {
+      title: `Delete ${items.length.toLocaleString()} ${items.length === 1 ? "item" : "items"}?`,
+      message: folders
+        ? `This permanently deletes ${items.length.toLocaleString()} selected items, including ${folders.toLocaleString()} ${folders === 1 ? "folder" : "folders"} and everything inside them.`
+        : `This permanently deletes ${items.length.toLocaleString()} selected files.`,
+      confirmLabel: "Delete permanently",
+      danger: true,
+      onConfirm: async () => {
+        const result = await runBulkOperation(items, (meta) => apiDeleteFile(meta.rootId, meta.path));
+        await finishBulk(summarizeBulkResult("Deleted", result));
+      },
+    };
+  }
+
   async function handleExternalDrop(dataTransfer: DataTransfer | null): Promise<void> {
     const target = directoryTarget(selectedMeta);
     uploadItems(await collectDroppedFiles(dataTransfer), target ?? undefined);
@@ -614,6 +728,17 @@
     onRename={(treePath, newName) => void renameFile(registry.get(treePath)!, newName)}
     onAction={(action, treePath) => void handleAction(action, treePath)}
     {canPickFolders}
+    bind:this={treePane}
+    {selectionActive}
+    selectedCount={selectedTreePaths.length}
+    selectedPaths={selectedTreePaths}
+    {bulkActions}
+    notice={bulkNotice}
+    onSelectionChange={updateSelection}
+    onSelectionActiveChange={setSelectionActive}
+    onSelectAllVisible={selectAllInFolder}
+    onMoveMany={(sources, target) => void moveMany(sources, target)}
+    onDismissNotice={() => (bulkNotice = null)}
   />
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -683,6 +808,14 @@
     raised={downloadActivity !== null}
   />
 {/if}
+
+<FileMoveDialog
+  open={moveDialogOpen}
+  itemCount={writableSelection.length}
+  folders={moveTargets}
+  onConfirm={(target, onProgress) => moveMany(writableSelection.map((meta) => meta.treePath), target, onProgress)}
+  onClose={() => (moveDialogOpen = false)}
+/>
 
 <FileUploadDialog
   open={pendingUpload !== null}
@@ -771,9 +904,12 @@
     }
 
     .files-page :global(.detail-pane),
-    .files-page.show-detail :global(.detail-pane),
-    .files-page.show-detail :global(.files-tree-pane) {
+    .files-page.show-detail :global(.detail-pane) {
       display: grid;
+    }
+
+    .files-page.show-detail :global(.files-tree-pane) {
+      display: flex;
     }
 
     .resize-handle {
