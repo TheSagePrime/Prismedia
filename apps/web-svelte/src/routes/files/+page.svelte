@@ -44,6 +44,7 @@
   } from "$lib/files/file-tree-state";
   import { collectDroppedFiles, fileListToUploadItems } from "$lib/files/dropped-files";
   import { UploadQueue, type UploadQueueSnapshot } from "$lib/files/upload-queue";
+  import { MEDIA_PICKER_ACCEPT, supportsFolderPicker } from "$lib/files/upload-pickers";
   import { useNsfw } from "$lib/nsfw/store.svelte";
 
   interface PendingNameDialog {
@@ -374,12 +375,14 @@
 
   async function handleAction(action: FileActionId, treePath = selectedTreePath): Promise<void> {
     const meta = treePath ? registry.get(treePath) : null;
-    if (!meta || !fileContextActions(meta.kind, meta.path === "", meta.excluded, meta.isReadOnly).some((choice) => choice.id === action)) return;
+    if (!meta || !fileContextActions(meta.kind, meta.path === "", meta.excluded, meta.isReadOnly, canPickFolders).some((choice) => choice.id === action)) return;
     try {
       if (action === "open") await selectTreePath(meta.treePath);
       if (action === "download") await downloadEntry(meta);
       if (action === "new-folder") await createFolder(meta.kind === "directory" ? meta : directoryTarget(meta)!);
-      if (action === "upload") requestFolderUpload(meta);
+      if (action === "upload") requestUpload("files", meta);
+      if (action === "upload-media") requestUpload("media", meta);
+      if (action === "upload-folder") requestUpload("folder", meta);
       if (action === "rename") await renameFile(meta);
       if (action === "move") await moveFile(meta);
       if (action === "delete") await deleteFile(meta);
@@ -484,35 +487,37 @@
     });
   }
 
-  function uploadFileList(files: FileList | null, target = directoryTarget(selectedMeta)): void {
-    uploadItems(fileListToUploadItems(files), target ?? undefined);
-  }
-
   function warnBeforeLeaving(event: BeforeUnloadEvent): void {
     if (!uploads.snapshot().active) return;
     event.preventDefault();
   }
 
-  // Hidden picker that backs the tree's "Upload files" action, letting a folder
-  // be the upload target without first selecting it — handy on touch where
-  // drag-and-drop isn't practical. The chosen folder is held until the picker
-  // resolves because the native dialog is asynchronous.
-  let folderUploadInput = $state<HTMLInputElement | null>(null);
-  let folderUploadTarget: FileTreeNodeMeta | null = null;
+  type UploadPickerKind = "files" | "media" | "folder";
 
-  function requestFolderUpload(meta: FileTreeNodeMeta): void {
+  // Hidden native pickers behind every upload button and menu action. The chosen folder is held
+  // until the picker resolves because the native dialog is asynchronous. Picking from the tree
+  // makes a folder the target without selecting it first, which matters on touch screens.
+  const canPickFolders = supportsFolderPicker();
+  let filesPicker = $state<HTMLInputElement | null>(null);
+  let mediaPicker = $state<HTMLInputElement | null>(null);
+  let folderPicker = $state<HTMLInputElement | null>(null);
+  let pickerTarget: FileTreeNodeMeta | null = null;
+
+  function requestUpload(kind: UploadPickerKind, meta: FileTreeNodeMeta): void {
     const target = directoryTarget(meta);
     if (!target) return;
-    folderUploadTarget = target;
-    folderUploadInput?.click();
+    pickerTarget = target;
+    const picker = kind === "media" ? mediaPicker : kind === "folder" ? folderPicker : filesPicker;
+    picker?.click();
   }
 
-  function onFolderUploadPicked(input: HTMLInputElement): void {
-    const target = folderUploadTarget;
-    folderUploadTarget = null;
+  function onUploadPicked(input: HTMLInputElement): void {
+    const target = pickerTarget;
+    pickerTarget = null;
     const files = input.files;
+    const items = fileListToUploadItems(files);
     input.value = "";
-    if (target) uploadFileList(files, target);
+    if (target) uploadItems(items, target);
   }
 
   async function handleExternalDrop(dataTransfer: DataTransfer | null): Promise<void> {
@@ -608,6 +613,7 @@
     onMove={(source, target) => void moveFile(registry.get(source)!, target)}
     onRename={(treePath, newName) => void renameFile(registry.get(treePath)!, newName)}
     onAction={(action, treePath) => void handleAction(action, treePath)}
+    {canPickFolders}
   />
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -625,20 +631,41 @@
     onBack={() => (mobileDetail = false)}
     onRefresh={() => void refreshSelected()}
     onAction={(action) => void handleAction(action)}
-    onUploadFiles={uploadFileList}
-    onUploadFolder={uploadFileList}
+    {canPickFolders}
     onExternalDrop={(dataTransfer) => void handleExternalDrop(dataTransfer)}
   />
 
   <input
-    bind:this={folderUploadInput}
+    bind:this={filesPicker}
     type="file"
     multiple
     class="hidden-input"
     tabindex="-1"
     aria-hidden="true"
-    onchange={(event) => onFolderUploadPicked(event.currentTarget)}
+    onchange={(event) => onUploadPicked(event.currentTarget)}
   />
+  <input
+    bind:this={mediaPicker}
+    type="file"
+    multiple
+    accept={MEDIA_PICKER_ACCEPT}
+    class="hidden-input"
+    tabindex="-1"
+    aria-hidden="true"
+    onchange={(event) => onUploadPicked(event.currentTarget)}
+  />
+  {#if canPickFolders}
+    <input
+      bind:this={folderPicker}
+      type="file"
+      multiple
+      webkitdirectory
+      class="hidden-input"
+      tabindex="-1"
+      aria-hidden="true"
+      onchange={(event) => onUploadPicked(event.currentTarget)}
+    />
+  {/if}
 </main>
 
 {#if uploadSnapshot && uploadSnapshot.items.length > 0}

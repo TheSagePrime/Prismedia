@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { TextInput } from "@prismedia/ui-svelte";
+  import { Upload } from "@lucide/svelte";
+  import { Button, TextInput } from "@prismedia/ui-svelte";
   import { onMount } from "svelte";
   import { FILE_ENTRY_KIND } from "$lib/api/generated/codes";
   import type { ContextMenuItem, ContextMenuOpenContext, FileTree, FileTreeDirectoryHandle } from "@pierre/trees";
@@ -21,6 +22,8 @@
     onMove?: (sourceTreePath: string, targetDirectoryTreePath: string | null) => void;
     onAction?: (action: FileActionId, treePath: string) => void;
     onRename?: (treePath: string, newName: string) => void;
+    /** Whether the browser can pick whole folders (not on iPhone or iPad). */
+    canPickFolders?: boolean;
   }
 
   let {
@@ -36,7 +39,14 @@
     onMove,
     onAction,
     onRename,
+    canPickFolders = false,
   }: Props = $props();
+
+  /** Upload target for the toolbar button: the selected entry's folder, or the first library root. */
+  const uploadTreePath = $derived(
+    selectedPath ?? paths.find((path) => registry.get(path)?.path === "") ?? null,
+  );
+  const uploadDisabled = $derived(!uploadTreePath || Boolean(registry.get(uploadTreePath)?.isReadOnly));
 
   let host: HTMLDivElement;
   let tree = $state<FileTree | null>(null);
@@ -71,7 +81,7 @@
     const rect = context.anchorRect;
     const meta = registry.get(item.path as string);
     const isRoot = meta?.path === "";
-    const actions = fileContextActions(item.kind, isRoot, meta?.excluded, meta?.isReadOnly);
+    const actions = fileContextActions(item.kind, isRoot, meta?.excluded, meta?.isReadOnly, canPickFolders);
     const menuHeight = actions.length * 32 + 2;
     const menuWidth = 160;
     const top = rect.bottom + menuHeight > window.innerHeight ? Math.max(4, rect.top - menuHeight) : rect.bottom;
@@ -366,6 +376,17 @@
       value={search}
       oninput={(event) => onSearch?.(event.currentTarget.value)}
     />
+    <Button
+      variant="secondary"
+      size="sm"
+      type="button"
+      class="shrink-0"
+      disabled={uploadDisabled}
+      aria-label="Upload files into the selected folder"
+      onclick={() => uploadTreePath && onAction?.("upload", uploadTreePath)}
+    >
+      <Upload class="h-3.5 w-3.5" />Upload
+    </Button>
   </div>
   <div class="tree-host" bind:this={host} aria-busy={loading}></div>
 </section>

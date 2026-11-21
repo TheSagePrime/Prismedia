@@ -8,6 +8,8 @@ describe("file actions", () => {
       "download",
       "new-folder",
       "upload",
+      "upload-media",
+      "upload-folder",
       "rename",
       "move",
       "rescan",
@@ -30,8 +32,16 @@ describe("file actions", () => {
       "download",
       "new-folder",
       "upload",
+      "upload-media",
+      "upload-folder",
       "rescan",
     ]);
+  });
+
+  it("hides folder uploads where the browser cannot pick folders", () => {
+    const ids = fileContextActions("directory", false, false, false, false).map((action) => action.id);
+    expect(ids).toContain("upload-media");
+    expect(ids).not.toContain("upload-folder");
   });
 
   it("keeps external libraries readable without exposing mutations", () => {

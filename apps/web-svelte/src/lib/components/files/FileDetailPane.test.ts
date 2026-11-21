@@ -59,6 +59,23 @@ describe("FileDetailPane", () => {
 
     expect(onAction).toHaveBeenCalledWith("download");
   });
+
+  it("shows visible upload buttons for folders, with folder picking only where supported", async () => {
+    const onAction = vi.fn();
+    const folder = fileDetail({
+      entry: { ...fileDetail().entry, path: "Photos", name: "Photos", kind: "directory", sizeBytes: null, mimeType: null },
+    });
+    const { rerender } = render(FileDetailPane, { props: { detail: folder, onAction, canPickFolders: false } });
+
+    expect(screen.queryByRole("button", { name: "Upload folder" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Photos & videos" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Upload files" }));
+
+    await rerender({ detail: folder, onAction, canPickFolders: true });
+    await fireEvent.click(screen.getByRole("button", { name: "Upload folder" }));
+
+    expect(onAction.mock.calls.map(([action]) => action)).toEqual(["upload-media", "upload", "upload-folder"]);
+  });
 });
 
 function fileDetail(overrides: Partial<FileDetail> = {}): FileDetail {
