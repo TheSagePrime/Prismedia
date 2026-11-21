@@ -1,12 +1,17 @@
 import {
+  cancelFileUpload,
+  completeFileUpload,
   createFileFolder as createFileFolderRequest,
+  createFileUpload,
   deleteFile as deleteFileRequest,
   getDownloadFileArchiveUrl,
   getDownloadFileUrl,
   excludeFile as excludeFileRequest,
   getFileArchiveStatus,
   getFileDetail,
+  getFileUpload,
   getGetFileContentUrl,
+  getUploadFileChunkUrl,
   listFileChildren,
   listFileRoots,
   moveFile as moveFileRequest,
@@ -14,7 +19,6 @@ import {
   removeFileExclusion as removeFileExclusionRequest,
   renameFile as renameFileRequest,
   rescanFileRoot as rescanFileRootRequest,
-  uploadFiles as uploadFilesRequest,
 } from "$lib/api/generated/prismedia";
 import type {
   FileChildrenResponse,
@@ -29,9 +33,17 @@ import type {
   FileRescanRequest,
   FileRoot,
   FileRootsResponse,
+  FileUploadCompletion,
+  FileUploadSession,
 } from "$lib/api/generated/model";
 import { requestInit, unwrapGenerated, type RequestOptions } from "$lib/api/generated-response";
-import { apiPath } from "$lib/api/orval-fetch";
+import { ApiError, apiPath } from "$lib/api/orval-fetch";
+import {
+  UploadTransportError,
+  type UploadCompletionResult,
+  type UploadSessionProgress,
+  type UploadTransport,
+} from "$lib/files/upload-queue";
 import type { EntityFileRoleCode } from "$lib/entities/entity-codes";
 
 export type { FileChildrenResponse, FileEntry, FileRoot, FileRootsResponse };
@@ -47,10 +59,7 @@ export interface FileOperationResponse {
   scansQueued: number;
 }
 
-export interface FileUploadItem {
-  file: File;
-  relativePath: string;
-}
+export type { FileUploadItem } from "$lib/files/dropped-files";
 
 export interface FileArchivePreparation {
   id: string;
@@ -159,26 +168,104 @@ export async function createFileFolder(
   );
 }
 
-export async function uploadFiles(
-  rootId: string,
-  targetPath: string,
-  items: FileUploadItem[],
-  options?: RequestOptions,
-): Promise<FileOperationResponse> {
-  const form = new FormData();
-  form.append("rootId", rootId);
-  form.append("targetPath", targetPath);
-  for (const item of items) {
-    form.append("relativePaths", item.relativePath);
-    form.append("files", item.file);
-  }
+/**
+ * Resumable upload transport over the Files upload API. Chunks are sent with XMLHttpRequest so
+ * the queue can show byte-level progress; every failure is reported as an `UploadTransportError`
+ * with its HTTP status (0 when the connection dropped) and problem code.
+ */
+export function createFileUploadTransport(): UploadTransport {
+  return {
+    async create(request, signal) {
+      const response = await translateUploadErrors(() => createFileUpload(request, undefined, { signal }));
+      const data = response.data;
+      return {
+        session: data.session ? normalizeUploadSession(data.session) : null,
+        completion: data.completion ? normalizeUploadCompletion(data.completion) : null,
+      };
+    },
+    async status(id, signal) {
+      const response = await translateUploadErrors(() => getFileUpload(id, { signal }));
+      return normalizeUploadSession(response.data);
+    },
+    sendChunk(id, offset, chunk, onProgress, signal) {
+      return sendUploadChunk(apiPath(getUploadFileChunkUrl(id, { offset })), chunk, onProgress, signal);
+    },
+    async complete(id, signal) {
+      const response = await translateUploadErrors(() => completeFileUpload(id, undefined, { signal }));
+      return normalizeUploadCompletion(response.data);
+    },
+    async cancel(id) {
+      await translateUploadErrors(() => cancelFileUpload(id));
+    },
+  };
+}
 
-  return normalizeFileOperation(
-    unwrapGenerated(
-      await uploadFilesRequest({ body: form, signal: options?.signal }),
-      "Failed to upload files",
-    ),
-  );
+async function translateUploadErrors<T>(request: () => Promise<T>): Promise<T> {
+  try {
+    return await request();
+  } catch (error) {
+    if (error instanceof ApiError) throw new UploadTransportError(error.message, error.status, error.problemCode);
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new UploadTransportError("The connection to the server was lost.", 0);
+  }
+}
+
+function sendUploadChunk(
+  url: string,
+  chunk: Blob,
+  onProgress: (loadedBytes: number) => void,
+  signal: AbortSignal,
+): Promise<UploadSessionProgress> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    const onAbort = () => request.abort();
+    request.open("PUT", url);
+    request.withCredentials = true;
+    request.setRequestHeader("Content-Type", "application/octet-stream");
+    request.upload.onprogress = (event) => onProgress(event.loaded);
+    request.onload = () => {
+      signal.removeEventListener("abort", onAbort);
+      let data: unknown = null;
+      try {
+        data = request.responseText ? JSON.parse(request.responseText) : null;
+      } catch {
+        data = null;
+      }
+      if (request.status >= 200 && request.status < 300) {
+        resolve(normalizeUploadSession(data as FileUploadSession));
+        return;
+      }
+      const problem = (data ?? {}) as { message?: string; code?: string };
+      reject(new UploadTransportError(problem.message ?? `Upload failed (${request.status})`, request.status, problem.code));
+    };
+    request.onerror = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(new UploadTransportError("The connection to the server was lost.", 0));
+    };
+    request.ontimeout = request.onerror;
+    request.onabort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason ?? new DOMException("Upload cancelled.", "AbortError"));
+    };
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+    request.send(chunk);
+  });
+}
+
+function normalizeUploadSession(session: FileUploadSession): UploadSessionProgress {
+  return {
+    id: session.id,
+    receivedBytes: Number(session.receivedBytes),
+    maxChunkBytes: Number(session.maxChunkBytes),
+  };
+}
+
+function normalizeUploadCompletion(completion: FileUploadCompletion): UploadCompletionResult {
+  return { outcome: completion.outcome, relativePath: completion.relativePath };
 }
 
 export async function renameFile(

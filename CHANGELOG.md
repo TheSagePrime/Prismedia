@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- Files uploads are resumable. Each file uploads on its own in small pieces, retries automatically when the connection drops, and continues from the last piece the server received, so one failure no longer loses the whole batch. A progress panel shows overall and per-file progress, speed, and time left, with cancel, retry, and retry-all-failed controls. Partial uploads stay hidden on the library disk until complete, need no extra temporary space, and are cleaned up after 24 hours without activity.
+
+- Before an upload starts, Files asks what to do when a file with the same name already exists: keep both with a numbered name, skip it, or report it as an error. The choice applies per file, so the rest of the batch continues, and the upload panel lists skipped and renamed files.
+
 - Movie and series folders, and movie file names, tagged with a provider ID in Radarr, Sonarr, Plex, Jellyfin, or Emby style, such as `{tmdb-603}`, `[tmdbid-603]`, or `{tvdb-81189}`, identify by that exact ID instead of a title search, in Auto Identify and in Identify. TMDB reads `tmdb` tags; TheTVDB and IMDb tags go to plugins that support them. IDs already saved on an item take precedence, and contradictory tags are ignored.
 
 - Audiobook files with embedded chapters, such as M4B, play chapter by chapter, like a book with one file per chapter. Next and Previous move between chapters; the timeline, elapsed time, and lock-screen controls cover the current chapter; Up Next lists the remaining chapters; and repeat-one repeats the current chapter. Each chapter plays under its mapped ebook chapter's title, falling back to the title in the audio file and then the Book's title. Listening progress and resume positions work as before.
@@ -207,6 +211,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Removed
 
+- The single-request `POST /api/files/upload` route has been removed in favor of the resumable `/api/files/uploads` routes used by the web app.
 - Deprecated kind-specific Entity detail reads have been removed; use `GET /api/entities/{id}` for every Entity kind.
 - Deprecated playback-statistics, Entity-playback mutation, and audio-track play-count routes have been removed in favor of the shared Consumption API.
 - Audio-track detail and saved-queue payloads no longer duplicate embedded artist and album fields outside the Entity's `embedded-audio-metadata` capability.
@@ -215,7 +220,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Hardened security across the server and web app: stricter permission checks for editing items and creating libraries, signed-in access for generated thumbnails and previews, safer handling of artwork links and downloads, a content security policy with sanitized book content in the reader, safer file-manager operations on library roots, read-only libraries and links, size limits for archive pages, required checksums for catalog plugins, an additional per-account sign-in limit, and updated cryptography dependencies.
 - Added opt-in trusted reverse-proxy support with `PRISMEDIA_TRUSTED_PROXIES`.
-- Files uploads accept large video files instead of stopping at the default request size, and the Docker image buffers uploads on the data volume.
+- Files uploads accept large video files instead of stopping at the default request size.
 - Dropping a large folder onto Files uploads every file in it, including folders with more than 100 items, instead of silently uploading only the first batch.
 
 - Gallery, series, season, album, artist, author, book, and comic pages list every item again instead of stopping at the first 250 of each kind. Next and previous in the reader, and Identify reviews of large series, include every item too.

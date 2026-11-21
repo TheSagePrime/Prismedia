@@ -84,6 +84,9 @@ public static class FilesEndpoints {
         var problem = new ApiProblem(error.Code, error.Message);
         return error switch {
             FileConflictException => Results.Conflict(problem),
+            _ when error.Code is ApiProblemCodes.UploadOffsetMismatch => Results.Conflict(problem),
+            _ when error.Code is ApiProblemCodes.InsufficientStorage =>
+                Results.Json(problem, statusCode: StatusCodes.Status507InsufficientStorage),
             _ when error.Code is ApiProblemCodes.RootNotFound or ApiProblemCodes.NotFound => Results.NotFound(problem),
             _ => Results.BadRequest(problem),
         };

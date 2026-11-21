@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import FileDetailPane from "$lib/components/files/FileDetailPane.svelte";
   import FileDownloadStatus from "$lib/components/files/FileDownloadStatus.svelte";
   import FileTreePane from "$lib/components/files/FileTreePane.svelte";
+  import FileUploadDialog from "$lib/components/files/FileUploadDialog.svelte";
+  import FileUploadPanel from "$lib/components/files/FileUploadPanel.svelte";
   import ConfirmDialog from "$lib/components/entities/ConfirmDialog.svelte";
   import NameInputDialog from "$lib/components/entities/NameInputDialog.svelte";
   import {
@@ -21,12 +23,16 @@
     renameFile as apiRenameFile,
     removeFileExclusion as apiRemoveFileExclusion,
     rescanFileRoot as apiRescanFileRoot,
-    uploadFiles as apiUploadFiles,
+    createFileUploadTransport,
     type FileDetail,
     type FileRoot,
     type FileUploadItem,
   } from "$lib/api/files";
-  import { FILE_ENTRY_KIND } from "$lib/api/generated/codes";
+  import {
+    FILE_ENTRY_KIND,
+    FILE_UPLOAD_CONFLICT_POLICY,
+    type FileUploadConflictPolicyCode,
+  } from "$lib/api/generated/codes";
   import { refreshEntity } from "$lib/api/entities";
   import { fileContextActions, type FileActionId } from "$lib/files/file-actions";
   import {
@@ -36,7 +42,8 @@
     type FileTreeNodeMeta,
     upsertFileTreeEntries,
   } from "$lib/files/file-tree-state";
-  import { collectDroppedFiles } from "$lib/files/dropped-files";
+  import { collectDroppedFiles, fileListToUploadItems } from "$lib/files/dropped-files";
+  import { UploadQueue, type UploadQueueSnapshot } from "$lib/files/upload-queue";
   import { useNsfw } from "$lib/nsfw/store.svelte";
 
   interface PendingNameDialog {
@@ -387,37 +394,103 @@
     }
   }
 
-  async function uploadItems(
-    items: FileUploadItem[],
-    target = directoryTarget(selectedMeta),
-  ): Promise<void> {
-    if (!target || items.length === 0) return;
-    if (target.isReadOnly) { error = "This library is managed by the connected application and is read-only."; return; }
+  interface PendingUpload {
+    items: FileUploadItem[];
+    target: FileTreeNodeMeta;
+  }
+
+  const CONFLICT_POLICY_STORAGE_KEY = "prismedia.files.upload-conflict-policy";
+  const conflictPolicies = new Set<string>(Object.values(FILE_UPLOAD_CONFLICT_POLICY));
+  let pendingUpload = $state<PendingUpload | null>(null);
+  let conflictPolicy = $state<FileUploadConflictPolicyCode>(readConflictPolicy());
+  let uploadSnapshot = $state<UploadQueueSnapshot | null>(null);
+  let snapshotFrame = 0;
+  const refreshTargets = new Map<string, FileTreeNodeMeta>();
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const uploads = new UploadQueue({
+    transport: createFileUploadTransport(),
+    onChange: (snapshot) => {
+      // Progress events arrive many times per second; render at most once per frame.
+      if (snapshotFrame) cancelAnimationFrame(snapshotFrame);
+      snapshotFrame = requestAnimationFrame(() => {
+        snapshotFrame = 0;
+        uploadSnapshot = snapshot;
+      });
+    },
+    onFileStored: (item) => {
+      const target = [...registry.values()].find((meta) =>
+        meta.rootId === item.rootId && meta.path === item.targetPath && meta.kind === FILE_ENTRY_KIND.directory);
+      if (target) scheduleFolderRefresh(target);
+    },
+  });
+
+  function readConflictPolicy(): FileUploadConflictPolicyCode {
     try {
-      await apiUploadFiles(target.rootId, target.path, items);
-      const nextLoaded = new Set(loadedKeys);
-      nextLoaded.delete(loadedKey(target));
-      loadedKeys = nextLoaded;
-      await loadChildren(target);
-      if (selectedMeta?.treePath === target.treePath) await loadDetail(target);
-      else if (selectedMeta?.kind === "file") await loadDetail(target);
-    } catch (uploadError) {
-      const message = uploadError instanceof Error ? uploadError.message : "Upload failed";
-      error = message.includes("already exists")
-        ? `${message} Rename the incoming file or upload into a new folder.`
-        : message;
+      const saved = localStorage.getItem(CONFLICT_POLICY_STORAGE_KEY);
+      if (saved && conflictPolicies.has(saved)) return saved as FileUploadConflictPolicyCode;
+    } catch {
+      // Storage can be unavailable in private windows; the default still works.
+    }
+    return FILE_UPLOAD_CONFLICT_POLICY.keepBoth;
+  }
+
+  function setConflictPolicy(policy: FileUploadConflictPolicyCode): void {
+    conflictPolicy = policy;
+    try {
+      localStorage.setItem(CONFLICT_POLICY_STORAGE_KEY, policy);
+    } catch {
+      // Remembering the choice is a convenience only.
     }
   }
 
+  /** Reloads a target folder shortly after files land in it, batching many finished files. */
+  function scheduleFolderRefresh(target: FileTreeNodeMeta): void {
+    refreshTargets.set(target.treePath, target);
+    if (refreshTimer) return;
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      const targets = [...refreshTargets.values()];
+      refreshTargets.clear();
+      void (async () => {
+        for (const folder of targets) {
+          const nextLoaded = new Set(loadedKeys);
+          nextLoaded.delete(loadedKey(folder));
+          loadedKeys = nextLoaded;
+          await loadChildren(folder);
+        }
+        if (selectedMeta && targets.some((folder) => folder.treePath === directoryTarget(selectedMeta)?.treePath)) {
+          await loadDetail(selectedMeta);
+        }
+      })();
+    }, 1_500);
+  }
+
+  /** Asks for the batch's conflict choice before any bytes are sent. */
+  function uploadItems(items: FileUploadItem[], target = directoryTarget(selectedMeta)): void {
+    if (!target || items.length === 0) return;
+    if (target.isReadOnly) { error = "This library is managed by the connected application and is read-only."; return; }
+    pendingUpload = { items, target };
+  }
+
+  function startPendingUpload(): void {
+    const pending = pendingUpload;
+    pendingUpload = null;
+    if (!pending) return;
+    uploads.add(pending.items, {
+      rootId: pending.target.rootId,
+      targetPath: pending.target.path,
+      conflictPolicy,
+    });
+  }
+
   function uploadFileList(files: FileList | null, target = directoryTarget(selectedMeta)): void {
-    if (!files?.length) return;
-    void uploadItems(
-      Array.from(files).map((file) => ({
-        file,
-        relativePath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
-      })),
-      target ?? undefined,
-    );
+    uploadItems(fileListToUploadItems(files), target ?? undefined);
+  }
+
+  function warnBeforeLeaving(event: BeforeUnloadEvent): void {
+    if (!uploads.snapshot().active) return;
+    event.preventDefault();
   }
 
   // Hidden picker that backs the tree's "Upload files" action, letting a folder
@@ -443,7 +516,8 @@
   }
 
   async function handleExternalDrop(dataTransfer: DataTransfer | null): Promise<void> {
-    await uploadItems(await collectDroppedFiles(dataTransfer));
+    const target = directoryTarget(selectedMeta);
+    uploadItems(await collectDroppedFiles(dataTransfer), target ?? undefined);
   }
 
   $effect(() => {
@@ -488,6 +562,14 @@
   onMount(() => {
     lastNsfwMode = nsfw.mode;
     void loadRoots();
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  });
+
+  onDestroy(() => {
+    uploads.cancelAll();
+    if (refreshTimer) clearTimeout(refreshTimer);
+    if (snapshotFrame) cancelAnimationFrame(snapshotFrame);
   });
 
   $effect(() => {
@@ -558,6 +640,33 @@
     onchange={(event) => onFolderUploadPicked(event.currentTarget)}
   />
 </main>
+
+{#if uploadSnapshot && uploadSnapshot.items.length > 0}
+  <FileUploadPanel
+    snapshot={uploadSnapshot}
+    onCancel={(id) => uploads.cancel(id)}
+    onCancelAll={() => uploads.cancelAll()}
+    onRetry={(id) => uploads.retry(id)}
+    onRetryFailed={() => uploads.retryFailed()}
+    onClearFinished={() => uploads.clearFinished()}
+    onDismiss={() => {
+      uploads.cancelAll();
+      uploads.clearFinished();
+    }}
+    raised={downloadActivity !== null}
+  />
+{/if}
+
+<FileUploadDialog
+  open={pendingUpload !== null}
+  fileCount={pendingUpload?.items.length ?? 0}
+  totalBytes={pendingUpload?.items.reduce((sum, item) => sum + item.file.size, 0) ?? 0}
+  destination={pendingUpload ? `${pendingUpload.target.name}${pendingUpload.target.path ? ` (/${pendingUpload.target.path})` : ""}` : ""}
+  {conflictPolicy}
+  onConflictPolicyChange={setConflictPolicy}
+  onConfirm={startPendingUpload}
+  onClose={() => (pendingUpload = null)}
+/>
 
 {#if downloadActivity}
   <FileDownloadStatus

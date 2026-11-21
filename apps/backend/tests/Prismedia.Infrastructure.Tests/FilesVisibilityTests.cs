@@ -1,3 +1,4 @@
+using Prismedia.Infrastructure.Files;
 using Prismedia.Application.Files;
 using Prismedia.Application.Entities;
 using Prismedia.Application.Jobs;
@@ -82,7 +83,8 @@ public sealed class FilesVisibilityTests {
             new FakeStorage(),
             archives ?? new RecordingArchivePreparationService(),
             new FakeJobQueue(),
-            new EntitySourcePathMutationCoordinator(new NoSourceOwners(), new UnreachableLifecycleLease()));
+            new EntitySourcePathMutationCoordinator(new NoSourceOwners(), new UnreachableLifecycleLease()),
+            new LocalFileUploadStaging(new TestFileMutationGuard()));
 
     private sealed class FakeFilesPersistence(IReadOnlySet<string> hiddenPaths) : IFilesPersistence {
         public Task<IReadOnlyList<FileLibraryRoot>> ListRootsAsync(CancellationToken cancellationToken) =>
@@ -188,7 +190,6 @@ public sealed class FilesVisibilityTests {
 
         public Task CreateDirectoryAsync(ResolvedFilePath path, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task WriteFileAsync(ResolvedFilePath path, Stream content, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task MoveAsync(ResolvedFilePath source, ResolvedFilePath target, CancellationToken cancellationToken) => Task.CompletedTask;
 

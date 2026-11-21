@@ -200,6 +200,15 @@ public static class ApiProblemCodes {
     /// <summary>Problem code <c>invalid_upload</c>.</summary>
     public const string InvalidUpload = "invalid_upload";
 
+    /// <summary>Problem code <c>upload_offset_mismatch</c>: a chunk did not start where the stored bytes end.</summary>
+    public const string UploadOffsetMismatch = "upload_offset_mismatch";
+
+    /// <summary>Problem code <c>upload_incomplete</c>: an upload was completed before all of its bytes arrived.</summary>
+    public const string UploadIncomplete = "upload_incomplete";
+
+    /// <summary>Problem code <c>insufficient_storage</c>: the library disk cannot hold the upload.</summary>
+    public const string InsufficientStorage = "insufficient_storage";
+
     /// <summary>Problem code <c>last_admin_required</c>.</summary>
     public const string LastAdminRequired = "last_admin_required";
 

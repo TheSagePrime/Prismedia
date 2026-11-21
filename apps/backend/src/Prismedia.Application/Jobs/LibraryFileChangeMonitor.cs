@@ -117,6 +117,11 @@ internal sealed class LibraryFileChangeMonitor(
     }
 
     private void Observe(Guid rootId, string path) {
+        // Partial uploads change constantly and are not library content until they are moved into place.
+        if (FileUploadStaging.IsStagingPath(path)) {
+            return;
+        }
+
         try {
             observations[(rootId, Path.GetFullPath(path))] = DateTimeOffset.UtcNow;
         } catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException) {

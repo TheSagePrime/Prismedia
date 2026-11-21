@@ -2064,7 +2064,6 @@ public sealed class MediaEntityDeletionServiceTests {
         public bool ResolvesInsideRoot(ResolvedFilePath path) => true;
 
         public Task CreateDirectoryAsync(ResolvedFilePath path, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task WriteFileAsync(ResolvedFilePath path, Stream content, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task MoveAsync(ResolvedFilePath source, ResolvedFilePath target, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
