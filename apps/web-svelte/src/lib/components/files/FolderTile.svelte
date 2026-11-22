@@ -5,7 +5,7 @@
    * home page's Folders row so both look the same.
    */
   import { FileText, Folder, Image as ImageIcon, Video } from "@lucide/svelte";
-  import { cn } from "@prismedia/ui-svelte";
+  import { Button, cn } from "@prismedia/ui-svelte";
 
   interface Props {
     name: string;
@@ -59,14 +59,20 @@
     {@render body()}
   </a>
 {:else}
-  <button type="button" class={cn("folder-tile", className)} class:selected aria-label={directory ? `Folder ${name}` : name} {onclick}>
+  <Button
+    variant="ghost"
+    type="button"
+    class={cn("folder-tile h-auto w-full justify-stretch whitespace-normal p-0 hover:bg-transparent", selected && "selected", className)}
+    aria-label={directory ? `Folder ${name}` : name}
+    {onclick}
+  >
     {@render body()}
-  </button>
+  </Button>
 {/if}
 
 <style>
-  .folder-tile {
-    display: grid;
+  :global(.folder-tile) {
+    display: grid !important;
     gap: 0.4rem;
     min-width: 0;
     padding: 0;
@@ -115,13 +121,13 @@
     color: var(--color-text-primary);
   }
 
-  .folder-tile:hover .tile-art,
-  .folder-tile:focus-visible .tile-art,
-  .folder-tile.selected .tile-art {
+  :global(.folder-tile:hover) .tile-art,
+  :global(.folder-tile:focus-visible) .tile-art,
+  :global(.folder-tile.selected) .tile-art {
     border-color: var(--color-border-accent);
   }
 
-  .folder-tile:focus-visible {
+  :global(.folder-tile:focus-visible) {
     outline: none;
   }
 
