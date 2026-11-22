@@ -152,9 +152,6 @@ public interface IManagedFileStorage {
     /// <summary>Creates one directory.</summary>
     Task CreateDirectoryAsync(ResolvedFilePath path, CancellationToken cancellationToken);
 
-    /// <summary>Writes a stream to a file path.</summary>
-    Task WriteFileAsync(ResolvedFilePath path, Stream content, CancellationToken cancellationToken);
-
     /// <summary>Moves one file or directory.</summary>
     Task MoveAsync(
         ResolvedFilePath source,

@@ -151,26 +151,6 @@ public sealed class LocalManagedFileStorage(ILibraryFileMutationGuard mutations)
     }
 
     /// <inheritdoc />
-    public async Task WriteFileAsync(
-        ResolvedFilePath path,
-        Stream content,
-        CancellationToken cancellationToken) {
-        await using var protection = await mutations.EnterAsync([path.AbsolutePath], cancellationToken);
-        EnsureNoSymlinkAncestor(path);
-        if (File.Exists(path.AbsolutePath) || Directory.Exists(path.AbsolutePath)) {
-            throw new FileConflictException($"A file or folder already exists at {path.RelativePath}.");
-        }
-
-        var parent = Path.GetDirectoryName(path.AbsolutePath);
-        if (!string.IsNullOrWhiteSpace(parent)) {
-            Directory.CreateDirectory(parent);
-        }
-
-        await using var output = new FileStream(path.AbsolutePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        await content.CopyToAsync(output, cancellationToken);
-    }
-
-    /// <inheritdoc />
     public async Task MoveAsync(
         ResolvedFilePath source,
         ResolvedFilePath target,
@@ -292,7 +272,11 @@ public sealed class LocalManagedFileStorage(ILibraryFileMutationGuard mutations)
         }
     }
 
-    private static void EnsureNoSymlinkAncestor(ResolvedFilePath path) {
+    /// <summary>
+    /// Rejects a path when it, or any folder between it and its library root, is a filesystem link.
+    /// Shared by every adapter that writes into a library root.
+    /// </summary>
+    internal static void EnsureNoSymlinkAncestor(ResolvedFilePath path) {
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path.Root.Path));
         var current = Path.GetFullPath(path.AbsolutePath);
         var probe = Directory.Exists(current) || File.Exists(current)

@@ -1,10 +1,13 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import FileDetailPane from "$lib/components/files/FileDetailPane.svelte";
   import FileDownloadStatus from "$lib/components/files/FileDownloadStatus.svelte";
+  import FileMoveDialog from "$lib/components/files/FileMoveDialog.svelte";
   import FileTreePane from "$lib/components/files/FileTreePane.svelte";
+  import FileUploadDialog from "$lib/components/files/FileUploadDialog.svelte";
+  import FileUploadPanel from "$lib/components/files/FileUploadPanel.svelte";
   import ConfirmDialog from "$lib/components/entities/ConfirmDialog.svelte";
   import NameInputDialog from "$lib/components/entities/NameInputDialog.svelte";
   import {
@@ -21,12 +24,16 @@
     renameFile as apiRenameFile,
     removeFileExclusion as apiRemoveFileExclusion,
     rescanFileRoot as apiRescanFileRoot,
-    uploadFiles as apiUploadFiles,
+    createFileUploadTransport,
     type FileDetail,
     type FileRoot,
     type FileUploadItem,
   } from "$lib/api/files";
-  import { FILE_ENTRY_KIND } from "$lib/api/generated/codes";
+  import {
+    FILE_ENTRY_KIND,
+    FILE_UPLOAD_CONFLICT_POLICY,
+    type FileUploadConflictPolicyCode,
+  } from "$lib/api/generated/codes";
   import { refreshEntity } from "$lib/api/entities";
   import { fileContextActions, type FileActionId } from "$lib/files/file-actions";
   import {
@@ -36,6 +43,11 @@
     type FileTreeNodeMeta,
     upsertFileTreeEntries,
   } from "$lib/files/file-tree-state";
+  import { collectDroppedFiles, fileListToUploadItems } from "$lib/files/dropped-files";
+  import { UploadQueue, type UploadQueueSnapshot } from "$lib/files/upload-queue";
+  import { MEDIA_PICKER_ACCEPT, supportsFolderPicker } from "$lib/files/upload-pickers";
+  import { planBulkMove, runBulkOperation, summarizeBulkResult, topLevelSelection } from "$lib/files/bulk-operations";
+  import type { EntityGridBulkAction } from "$lib/entities/entity-grid";
   import { useNsfw } from "$lib/nsfw/store.svelte";
 
   interface PendingNameDialog {
@@ -366,12 +378,14 @@
 
   async function handleAction(action: FileActionId, treePath = selectedTreePath): Promise<void> {
     const meta = treePath ? registry.get(treePath) : null;
-    if (!meta || !fileContextActions(meta.kind, meta.path === "", meta.excluded, meta.isReadOnly).some((choice) => choice.id === action)) return;
+    if (!meta || !fileContextActions(meta.kind, meta.path === "", meta.excluded, meta.isReadOnly, canPickFolders).some((choice) => choice.id === action)) return;
     try {
       if (action === "open") await selectTreePath(meta.treePath);
       if (action === "download") await downloadEntry(meta);
       if (action === "new-folder") await createFolder(meta.kind === "directory" ? meta : directoryTarget(meta)!);
-      if (action === "upload") requestFolderUpload(meta);
+      if (action === "upload") requestUpload("files", meta);
+      if (action === "upload-media") requestUpload("media", meta);
+      if (action === "upload-folder") requestUpload("folder", meta);
       if (action === "rename") await renameFile(meta);
       if (action === "move") await moveFile(meta);
       if (action === "delete") await deleteFile(meta);
@@ -386,113 +400,243 @@
     }
   }
 
-  async function uploadItems(
-    items: FileUploadItem[],
-    target = directoryTarget(selectedMeta),
-  ): Promise<void> {
-    if (!target || items.length === 0) return;
-    if (target.isReadOnly) { error = "This library is managed by the connected application and is read-only."; return; }
+  interface PendingUpload {
+    items: FileUploadItem[];
+    target: FileTreeNodeMeta;
+  }
+
+  const CONFLICT_POLICY_STORAGE_KEY = "prismedia.files.upload-conflict-policy";
+  const conflictPolicies = new Set<string>(Object.values(FILE_UPLOAD_CONFLICT_POLICY));
+  let pendingUpload = $state<PendingUpload | null>(null);
+  let conflictPolicy = $state<FileUploadConflictPolicyCode>(readConflictPolicy());
+  let uploadSnapshot = $state<UploadQueueSnapshot | null>(null);
+  let snapshotFrame = 0;
+  const refreshTargets = new Map<string, FileTreeNodeMeta>();
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const uploads = new UploadQueue({
+    transport: createFileUploadTransport(),
+    onChange: (snapshot) => {
+      // Progress events arrive many times per second; render at most once per frame.
+      if (snapshotFrame) cancelAnimationFrame(snapshotFrame);
+      snapshotFrame = requestAnimationFrame(() => {
+        snapshotFrame = 0;
+        uploadSnapshot = snapshot;
+      });
+    },
+    onFileStored: (item) => {
+      const target = [...registry.values()].find((meta) =>
+        meta.rootId === item.rootId && meta.path === item.targetPath && meta.kind === FILE_ENTRY_KIND.directory);
+      if (target) scheduleFolderRefresh(target);
+    },
+  });
+
+  function readConflictPolicy(): FileUploadConflictPolicyCode {
     try {
-      await apiUploadFiles(target.rootId, target.path, items);
-      const nextLoaded = new Set(loadedKeys);
-      nextLoaded.delete(loadedKey(target));
-      loadedKeys = nextLoaded;
-      await loadChildren(target);
-      if (selectedMeta?.treePath === target.treePath) await loadDetail(target);
-      else if (selectedMeta?.kind === "file") await loadDetail(target);
-    } catch (uploadError) {
-      const message = uploadError instanceof Error ? uploadError.message : "Upload failed";
-      error = message.includes("already exists")
-        ? `${message} Rename the incoming file or upload into a new folder.`
-        : message;
+      const saved = localStorage.getItem(CONFLICT_POLICY_STORAGE_KEY);
+      if (saved && conflictPolicies.has(saved)) return saved as FileUploadConflictPolicyCode;
+    } catch {
+      // Storage can be unavailable in private windows; the default still works.
+    }
+    return FILE_UPLOAD_CONFLICT_POLICY.keepBoth;
+  }
+
+  function setConflictPolicy(policy: FileUploadConflictPolicyCode): void {
+    conflictPolicy = policy;
+    try {
+      localStorage.setItem(CONFLICT_POLICY_STORAGE_KEY, policy);
+    } catch {
+      // Remembering the choice is a convenience only.
     }
   }
 
-  function uploadFileList(files: FileList | null, target = directoryTarget(selectedMeta)): void {
-    if (!files?.length) return;
-    void uploadItems(
-      Array.from(files).map((file) => ({
-        file,
-        relativePath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
-      })),
-      target ?? undefined,
-    );
+  /** Reloads a target folder shortly after files land in it, batching many finished files. */
+  function scheduleFolderRefresh(target: FileTreeNodeMeta): void {
+    refreshTargets.set(target.treePath, target);
+    if (refreshTimer) return;
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      const targets = [...refreshTargets.values()];
+      refreshTargets.clear();
+      void (async () => {
+        for (const folder of targets) {
+          const nextLoaded = new Set(loadedKeys);
+          nextLoaded.delete(loadedKey(folder));
+          loadedKeys = nextLoaded;
+          await loadChildren(folder);
+        }
+        if (selectedMeta && targets.some((folder) => folder.treePath === directoryTarget(selectedMeta)?.treePath)) {
+          await loadDetail(selectedMeta);
+        }
+      })();
+    }, 1_500);
   }
 
-  // Hidden picker that backs the tree's "Upload files" action, letting a folder
-  // be the upload target without first selecting it — handy on touch where
-  // drag-and-drop isn't practical. The chosen folder is held until the picker
-  // resolves because the native dialog is asynchronous.
-  let folderUploadInput = $state<HTMLInputElement | null>(null);
-  let folderUploadTarget: FileTreeNodeMeta | null = null;
+  /** Asks for the batch's conflict choice before any bytes are sent. */
+  function uploadItems(items: FileUploadItem[], target = directoryTarget(selectedMeta)): void {
+    if (!target || items.length === 0) return;
+    if (target.isReadOnly) { error = "This library is managed by the connected application and is read-only."; return; }
+    pendingUpload = { items, target };
+  }
 
-  function requestFolderUpload(meta: FileTreeNodeMeta): void {
+  function startPendingUpload(): void {
+    const pending = pendingUpload;
+    pendingUpload = null;
+    if (!pending) return;
+    uploads.add(pending.items, {
+      rootId: pending.target.rootId,
+      targetPath: pending.target.path,
+      conflictPolicy,
+    });
+  }
+
+  function warnBeforeLeaving(event: BeforeUnloadEvent): void {
+    if (!uploads.snapshot().active) return;
+    event.preventDefault();
+  }
+
+  type UploadPickerKind = "files" | "media" | "folder";
+
+  // Hidden native pickers behind every upload button and menu action. The chosen folder is held
+  // until the picker resolves because the native dialog is asynchronous. Picking from the tree
+  // makes a folder the target without selecting it first, which matters on touch screens.
+  const canPickFolders = supportsFolderPicker();
+  let filesPicker = $state<HTMLInputElement | null>(null);
+  let mediaPicker = $state<HTMLInputElement | null>(null);
+  let folderPicker = $state<HTMLInputElement | null>(null);
+  let pickerTarget: FileTreeNodeMeta | null = null;
+
+  function requestUpload(kind: UploadPickerKind, meta: FileTreeNodeMeta): void {
     const target = directoryTarget(meta);
     if (!target) return;
-    folderUploadTarget = target;
-    folderUploadInput?.click();
+    pickerTarget = target;
+    const picker = kind === "media" ? mediaPicker : kind === "folder" ? folderPicker : filesPicker;
+    picker?.click();
   }
 
-  function onFolderUploadPicked(input: HTMLInputElement): void {
-    const target = folderUploadTarget;
-    folderUploadTarget = null;
+  function onUploadPicked(input: HTMLInputElement): void {
+    const target = pickerTarget;
+    pickerTarget = null;
     const files = input.files;
+    const items = fileListToUploadItems(files);
     input.value = "";
-    if (target) uploadFileList(files, target);
+    if (target) uploadItems(items, target);
   }
 
-  async function collectDroppedFiles(dataTransfer: DataTransfer | null): Promise<FileUploadItem[]> {
-    if (!dataTransfer) return [];
-    const items = [...dataTransfer.items].filter((item) => item.kind === "file");
-    const collected = await Promise.all(items.map(async (item) => {
-      const entry = "webkitGetAsEntry" in item
-        ? (item as DataTransferItem & { webkitGetAsEntry: () => FileSystemEntry | null }).webkitGetAsEntry()
-        : null;
-      if (entry) return traverseEntry(entry, "");
-      const file = item.getAsFile();
-      return file ? [{ file, relativePath: file.name }] : [];
-    }));
-    const flattened = collected.flat();
-    return flattened.length
-      ? flattened
-      : Array.from(dataTransfer.files).map((file) => ({ file, relativePath: file.name }));
+  // ── Multi-select and bulk operations ─────────────────────────────
+  let treePane = $state<{ setSelection: (treePaths: readonly string[]) => void } | null>(null);
+  let selectionActive = $state(false);
+  let selectedTreePaths = $state<string[]>([]);
+  let bulkNotice = $state<{ tone: "success" | "warning" | "error"; message: string } | null>(null);
+  let moveDialogOpen = $state(false);
+
+  const selectedMetas = $derived(
+    selectedTreePaths.map((treePath) => registry.get(treePath)).filter((meta): meta is FileTreeNodeMeta => Boolean(meta)),
+  );
+  const writableSelection = $derived(topLevelSelection(selectedMetas.filter((meta) => !meta.isReadOnly)));
+  const moveTargets = $derived(
+    [...registry.values()]
+      .filter((meta) => meta.kind === FILE_ENTRY_KIND.directory && !meta.isReadOnly)
+      .map((meta) => ({ value: meta.treePath, label: meta.treePath.replace(/\/$/, "") }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  );
+  const bulkActions: EntityGridBulkAction[] = [
+    {
+      id: "move",
+      label: "Move to…",
+      isAvailable: () => writableSelection.length > 0,
+      onRun: () => (moveDialogOpen = true),
+    },
+    {
+      id: "delete",
+      label: "Delete permanently",
+      tone: "danger",
+      isAvailable: () => writableSelection.length > 0,
+      onRun: () => confirmBulkDelete(),
+    },
+  ];
+
+  function setSelectionActive(active: boolean): void {
+    selectionActive = active;
+    // Entering or leaving selection mode starts from an empty selection, so the folder that was
+    // open is not silently part of the bulk action.
+    treePane?.setSelection([]);
   }
 
-  interface FileSystemEntry {
-    isFile: boolean;
-    isDirectory: boolean;
-    name: string;
+  /** Library roots cannot be moved or deleted, so they never count toward a multi-selection. */
+  function updateSelection(treePaths: string[]): void {
+    selectedTreePaths = treePaths.filter((treePath) => registry.get(treePath)?.path !== "");
   }
 
-  interface FileSystemFileEntry extends FileSystemEntry {
-    file: (success: (file: File) => void, error?: (error: DOMException) => void) => void;
+  /** Selects every loaded entry in the folder of the current selection (or the selected folder). */
+  function selectAllInFolder(): void {
+    const anchor = selectedMetas[0] ?? selectedMeta;
+    const folder = anchor?.kind === FILE_ENTRY_KIND.directory && selectedMetas.length === 0 ? anchor : directoryTarget(anchor ?? null);
+    if (!folder) return;
+    treePane?.setSelection([...registry.values()]
+      .filter((meta) => meta.rootId === folder.rootId && meta.path !== "" && parentPath(meta.path) === folder.path)
+      .map((meta) => meta.treePath));
   }
 
-  interface FileSystemDirectoryEntry extends FileSystemEntry {
-    createReader: () => {
-      readEntries: (success: (entries: FileSystemEntry[]) => void, error?: (error: DOMException) => void) => void;
+  async function finishBulk(notice: { tone: "success" | "warning" | "error"; message: string }): Promise<void> {
+    bulkNotice = notice;
+    treePane?.setSelection([]);
+    selectionActive = false;
+    selectedTreePath = null;
+    detail = null;
+    await loadRoots();
+  }
+
+  /** Moves several entries into one folder, one at a time, then reports what happened. */
+  async function moveMany(
+    sourceTreePaths: string[],
+    targetTreePath: string | null,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<void> {
+    const target = targetTreePath ? registry.get(targetTreePath) : null;
+    if (!target || target.kind !== FILE_ENTRY_KIND.directory) return;
+    if (target.isReadOnly) { error = "Externally managed library files cannot be moved here."; return; }
+    const sources = sourceTreePaths.map((path) => registry.get(path)).filter((meta): meta is FileTreeNodeMeta => Boolean(meta));
+    const readOnly = sources.filter((meta) => meta.isReadOnly).map((item) => ({ item, reason: "read-only library" }));
+    const { moves, skipped } = planBulkMove(sources.filter((meta) => !meta.isReadOnly), target);
+    const result = await runBulkOperation(
+      moves,
+      (move) => apiMoveFile({
+        sourceRootId: move.item.rootId,
+        sourcePath: move.item.path,
+        targetRootId: move.targetRootId,
+        targetPath: move.targetPath,
+      }),
+      onProgress,
+    );
+    await finishBulk(summarizeBulkResult(
+      "Moved",
+      { succeeded: result.succeeded.map((move) => move.item), failed: result.failed.map(({ item, message }) => ({ item: item.item, message })) },
+      [...readOnly, ...skipped],
+    ));
+  }
+
+  function confirmBulkDelete(): void {
+    const items = writableSelection;
+    if (items.length === 0) return;
+    const folders = items.filter((meta) => meta.kind === FILE_ENTRY_KIND.directory).length;
+    pendingConfirmation = {
+      title: `Delete ${items.length.toLocaleString()} ${items.length === 1 ? "item" : "items"}?`,
+      message: folders
+        ? `This permanently deletes ${items.length.toLocaleString()} selected items, including ${folders.toLocaleString()} ${folders === 1 ? "folder" : "folders"} and everything inside them.`
+        : `This permanently deletes ${items.length.toLocaleString()} selected files.`,
+      confirmLabel: "Delete permanently",
+      danger: true,
+      onConfirm: async () => {
+        const result = await runBulkOperation(items, (meta) => apiDeleteFile(meta.rootId, meta.path));
+        await finishBulk(summarizeBulkResult("Deleted", result));
+      },
     };
   }
 
-  async function traverseEntry(entry: FileSystemEntry, basePath: string): Promise<FileUploadItem[]> {
-    const relativePath = [basePath, entry.name].filter(Boolean).join("/");
-    if (entry.isFile) {
-      const file = await new Promise<File>((resolve, reject) => {
-        (entry as FileSystemFileEntry).file(resolve, reject);
-      });
-      return [{ file, relativePath }];
-    }
-    if (!entry.isDirectory) return [];
-    const reader = (entry as FileSystemDirectoryEntry).createReader();
-    const entries = await new Promise<FileSystemEntry[]>((resolve, reject) => {
-      reader.readEntries(resolve, reject);
-    });
-    const nested = await Promise.all(entries.map((child) => traverseEntry(child, relativePath)));
-    return nested.flat();
-  }
-
   async function handleExternalDrop(dataTransfer: DataTransfer | null): Promise<void> {
-    await uploadItems(await collectDroppedFiles(dataTransfer));
+    const target = directoryTarget(selectedMeta);
+    uploadItems(await collectDroppedFiles(dataTransfer), target ?? undefined);
   }
 
   $effect(() => {
@@ -537,6 +681,14 @@
   onMount(() => {
     lastNsfwMode = nsfw.mode;
     void loadRoots();
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  });
+
+  onDestroy(() => {
+    uploads.cancelAll();
+    if (refreshTimer) clearTimeout(refreshTimer);
+    if (snapshotFrame) cancelAnimationFrame(snapshotFrame);
   });
 
   $effect(() => {
@@ -575,6 +727,18 @@
     onMove={(source, target) => void moveFile(registry.get(source)!, target)}
     onRename={(treePath, newName) => void renameFile(registry.get(treePath)!, newName)}
     onAction={(action, treePath) => void handleAction(action, treePath)}
+    {canPickFolders}
+    bind:this={treePane}
+    {selectionActive}
+    selectedCount={selectedTreePaths.length}
+    selectedPaths={selectedTreePaths}
+    {bulkActions}
+    notice={bulkNotice}
+    onSelectionChange={updateSelection}
+    onSelectionActiveChange={setSelectionActive}
+    onSelectAllVisible={selectAllInFolder}
+    onMoveMany={(sources, target) => void moveMany(sources, target)}
+    onDismissNotice={() => (bulkNotice = null)}
   />
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -592,21 +756,77 @@
     onBack={() => (mobileDetail = false)}
     onRefresh={() => void refreshSelected()}
     onAction={(action) => void handleAction(action)}
-    onUploadFiles={uploadFileList}
-    onUploadFolder={uploadFileList}
+    {canPickFolders}
     onExternalDrop={(dataTransfer) => void handleExternalDrop(dataTransfer)}
   />
 
   <input
-    bind:this={folderUploadInput}
+    bind:this={filesPicker}
     type="file"
     multiple
     class="hidden-input"
     tabindex="-1"
     aria-hidden="true"
-    onchange={(event) => onFolderUploadPicked(event.currentTarget)}
+    onchange={(event) => onUploadPicked(event.currentTarget)}
   />
+  <input
+    bind:this={mediaPicker}
+    type="file"
+    multiple
+    accept={MEDIA_PICKER_ACCEPT}
+    class="hidden-input"
+    tabindex="-1"
+    aria-hidden="true"
+    onchange={(event) => onUploadPicked(event.currentTarget)}
+  />
+  {#if canPickFolders}
+    <input
+      bind:this={folderPicker}
+      type="file"
+      multiple
+      webkitdirectory
+      class="hidden-input"
+      tabindex="-1"
+      aria-hidden="true"
+      onchange={(event) => onUploadPicked(event.currentTarget)}
+    />
+  {/if}
 </main>
+
+{#if uploadSnapshot && uploadSnapshot.items.length > 0}
+  <FileUploadPanel
+    snapshot={uploadSnapshot}
+    onCancel={(id) => uploads.cancel(id)}
+    onCancelAll={() => uploads.cancelAll()}
+    onRetry={(id) => uploads.retry(id)}
+    onRetryFailed={() => uploads.retryFailed()}
+    onClearFinished={() => uploads.clearFinished()}
+    onDismiss={() => {
+      uploads.cancelAll();
+      uploads.clearFinished();
+    }}
+    raised={downloadActivity !== null}
+  />
+{/if}
+
+<FileMoveDialog
+  open={moveDialogOpen}
+  itemCount={writableSelection.length}
+  folders={moveTargets}
+  onConfirm={(target, onProgress) => moveMany(writableSelection.map((meta) => meta.treePath), target, onProgress)}
+  onClose={() => (moveDialogOpen = false)}
+/>
+
+<FileUploadDialog
+  open={pendingUpload !== null}
+  fileCount={pendingUpload?.items.length ?? 0}
+  totalBytes={pendingUpload?.items.reduce((sum, item) => sum + item.file.size, 0) ?? 0}
+  destination={pendingUpload ? `${pendingUpload.target.name}${pendingUpload.target.path ? ` (/${pendingUpload.target.path})` : ""}` : ""}
+  {conflictPolicy}
+  onConflictPolicyChange={setConflictPolicy}
+  onConfirm={startPendingUpload}
+  onClose={() => (pendingUpload = null)}
+/>
 
 {#if downloadActivity}
   <FileDownloadStatus
@@ -684,9 +904,12 @@
     }
 
     .files-page :global(.detail-pane),
-    .files-page.show-detail :global(.detail-pane),
-    .files-page.show-detail :global(.files-tree-pane) {
+    .files-page.show-detail :global(.detail-pane) {
       display: grid;
+    }
+
+    .files-page.show-detail :global(.files-tree-pane) {
+      display: flex;
     }
 
     .resize-handle {

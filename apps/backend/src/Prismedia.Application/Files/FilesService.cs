@@ -11,12 +11,13 @@ namespace Prismedia.Application.Files;
 /// paths, coordinates disk operations through <see cref="IManagedFileStorage"/>, rewrites
 /// known catalog source paths after moves, and queues scans for affected roots.
 /// </summary>
-public sealed class FilesService(
+public sealed partial class FilesService(
     IFilesPersistence persistence,
     IManagedFileStorage storage,
     IFileArchivePreparationService archives,
     IJobQueueService jobs,
     EntitySourcePathMutationCoordinator sourcePathMutations,
+    IFileUploadStaging uploads,
     ILibraryFileChangeIntake? fileChanges = null) {
     /// <summary>Lists watched roots available to the Files page.</summary>
     public async Task<FileRootsResponse> ListRootsAsync(bool hideNsfw, CancellationToken cancellationToken) {
@@ -111,41 +112,6 @@ public sealed class FilesService(
         await storage.CreateDirectoryAsync(target, cancellationToken);
         return new FileOperationResponse(await QueueChangedScansAsync(
             target.Root, [target.AbsolutePath], cancellationToken));
-    }
-
-    /// <summary>Uploads files to a watched-root directory while preserving nested relative paths.</summary>
-    public async Task<FileOperationResponse> UploadAsync(
-        FileUploadRequest request,
-        bool hideNsfw,
-        CancellationToken cancellationToken) {
-        if (request.Items.Count == 0) {
-            return new FileOperationResponse(0);
-        }
-
-        var targetPath = NormalizeRelativePath(request.TargetPath);
-        FileLibraryRoot? root = null;
-        var writtenPaths = new List<string>(request.Items.Count);
-        foreach (var item in request.Items) {
-            var relativeItemPath = NormalizeRelativePath(item.RelativePath);
-            if (string.IsNullOrWhiteSpace(relativeItemPath)) {
-                throw new FileOperationException(ApiProblemCodes.InvalidPath, "Uploaded files must include a relative path.");
-            }
-
-            var destination = await ResolveAsync(
-                request.RootId,
-                CombineRelative(targetPath, relativeItemPath),
-                hideNsfw,
-                cancellationToken);
-            EnsureWritable(destination.Root);
-            await EnsureVisiblePathAsync(destination, hideNsfw, cancellationToken);
-            root = destination.Root;
-            await storage.WriteFileAsync(destination, item.Content, cancellationToken);
-            writtenPaths.Add(destination.AbsolutePath);
-        }
-
-        return new FileOperationResponse(root is null
-            ? 0
-            : await QueueChangedScansAsync(root, writtenPaths, cancellationToken));
     }
 
     /// <summary>Renames a file or folder within its current parent directory.</summary>
@@ -380,7 +346,18 @@ public sealed class FilesService(
             throw new FileOperationException(ApiProblemCodes.InvalidPath, "Files paths cannot escape the selected library root.");
         }
 
+        if (IsInsideUploadStaging(trimmedRoot, trimmedAbsolute)) {
+            throw new FileOperationException(ApiProblemCodes.InvalidPath, "Files paths cannot address in-progress uploads.");
+        }
+
         return new ResolvedFilePath(root, ToRelativePath(normalizedRelative), absolute);
+    }
+
+    /// <summary>Whether a path inside a root is the root's upload staging folder or lies under it.</summary>
+    private static bool IsInsideUploadStaging(string trimmedRoot, string trimmedAbsolute) {
+        var relative = Path.GetRelativePath(trimmedRoot, trimmedAbsolute).Replace('\\', '/');
+        var firstSegment = relative.Split('/', 2)[0];
+        return FileSystemPathComparison.Equals(firstSegment, FileUploadStaging.DirectoryName);
     }
 
     private async Task<FileLibraryRoot> GetRootAsync(Guid rootId, bool hideNsfw, CancellationToken cancellationToken) {

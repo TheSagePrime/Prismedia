@@ -48,7 +48,11 @@ public sealed class ExternalLibraryWriteProtectionTests : IDisposable {
         var destination = new ResolvedFilePath(root, "copy.mkv", Path.Combine(workspace, "copy.mkv"));
         await Assert.ThrowsAsync<FileOperationException>(() => storage.DeleteAsync(protectedFile, default));
         await Assert.ThrowsAsync<FileOperationException>(() => storage.MoveAsync(protectedFile, destination, default));
-        await Assert.ThrowsAsync<FileOperationException>(() => storage.WriteFileAsync(new(root, "external/new.mkv", Path.Combine(external, "new.mkv")), new MemoryStream([1, 2, 3]), default));
+        var staging = new LocalFileUploadStaging(guard);
+        var upload = new FileUploadSessionRecord(Guid.NewGuid(), root.Id, "external/new.mkv", 3, FileUploadConflictPolicy.Fail, DateTimeOffset.UtcNow);
+        await staging.CreateAsync(root, upload, default);
+        await staging.AppendAsync(root, upload, 0, new MemoryStream([1, 2, 3]), default);
+        await Assert.ThrowsAsync<FileOperationException>(() => staging.CommitAsync(root, upload, new(root, "external/new.mkv", Path.Combine(external, "new.mkv")), default));
         var mover = new ImportFileMover(guard);
         await Assert.ThrowsAsync<FileOperationException>(() => mover.PlaceAsync(new(file, destination.AbsolutePath), ImportMode.Hardlink, default));
         await mover.PlaceAsync(new(file, destination.AbsolutePath), ImportMode.Copy, default);

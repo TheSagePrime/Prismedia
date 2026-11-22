@@ -97,19 +97,55 @@ public sealed record FileDetail(
 public sealed record FileCreateFolderRequest(Guid RootId, string? ParentPath, string Name);
 
 /// <summary>
-/// One uploaded file and its relative path within the dropped batch.
-/// </summary>
-/// <param name="RelativePath">Relative path to recreate under the target folder.</param>
-/// <param name="Content">Readable file content stream.</param>
-public sealed record FileUploadItem(string RelativePath, Stream Content);
-
-/// <summary>
-/// Request to upload files under a watched-root folder.
+/// Request to start one resumable Files upload. The file's bytes are then sent in ordered
+/// chunks and the upload is completed explicitly, so a dropped connection loses at most one chunk.
 /// </summary>
 /// <param name="RootId">Library root identifier.</param>
 /// <param name="TargetPath">Root-relative target folder path.</param>
-/// <param name="Items">Files to upload.</param>
-public sealed record FileUploadRequest(Guid RootId, string? TargetPath, IReadOnlyList<FileUploadItem> Items);
+/// <param name="RelativePath">File path relative to the target folder; nested folders are created.</param>
+/// <param name="SizeBytes">Exact size of the file in bytes.</param>
+/// <param name="ConflictPolicy">What to do when the destination already exists.</param>
+public sealed record FileUploadCreateRequest(
+    Guid RootId,
+    string? TargetPath,
+    string RelativePath,
+    long SizeBytes,
+    FileUploadConflictPolicy ConflictPolicy = FileUploadConflictPolicy.Fail);
+
+/// <summary>
+/// Server-side state of one resumable Files upload.
+/// </summary>
+/// <param name="Id">Upload session identifier.</param>
+/// <param name="RootId">Library root identifier.</param>
+/// <param name="RelativePath">Requested root-relative destination path.</param>
+/// <param name="SizeBytes">Declared size of the file in bytes.</param>
+/// <param name="ReceivedBytes">Bytes stored so far; the next chunk must start at this offset.</param>
+/// <param name="MaxChunkBytes">Largest chunk body the server accepts.</param>
+/// <param name="ExpiresAt">When the session is discarded if no further chunk arrives.</param>
+public sealed record FileUploadSession(
+    Guid Id,
+    Guid RootId,
+    string RelativePath,
+    long SizeBytes,
+    long ReceivedBytes,
+    long MaxChunkBytes,
+    DateTimeOffset ExpiresAt);
+
+/// <summary>
+/// Final result of one Files upload.
+/// </summary>
+/// <param name="Outcome">Whether the file was stored as requested, renamed, or skipped.</param>
+/// <param name="RelativePath">Root-relative path the file was stored at, or the existing path when skipped.</param>
+/// <param name="ScansQueued">Library scan jobs queued for the new file.</param>
+public sealed record FileUploadCompletion(FileUploadOutcome Outcome, string RelativePath, int ScansQueued);
+
+/// <summary>
+/// Response to starting a Files upload. Exactly one of the members is set: a session to send
+/// chunks to, or an immediate completion when the conflict policy skipped the file up front.
+/// </summary>
+/// <param name="Session">Session that accepts chunks, when the file still needs to be sent.</param>
+/// <param name="Completion">Final result, when no bytes need to be sent.</param>
+public sealed record FileUploadCreateResponse(FileUploadSession? Session, FileUploadCompletion? Completion);
 
 /// <summary>
 /// Request to rename one file or folder in place.

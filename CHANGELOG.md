@@ -8,11 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Docs
 
+- Documented resumable Files uploads, the conflict choice, multi-select moves and deletes, the disk space uploads need, uploading from iPhone, and the server cost of playing HEVC iPhone videos in browsers that cannot decode them.
+
 - Documented connecting Suwayomi OPDS catalogs to browse and import already downloaded CBZ chapters, including authentication and reading-progress settings.
 
 - Documented the executor protocol for durable jobs, sealed output manifests, retained artifacts, and independently retryable import acknowledgements.
 
 ### Added
+
+- Files uploads are resumable. Each file uploads on its own in small pieces, retries automatically when the connection drops, and continues from the last piece the server received, so one failure no longer loses the whole batch. A progress panel shows overall and per-file progress, speed, and time left, with cancel, retry, and retry-all-failed controls. Partial uploads stay hidden on the library disk until complete, need no extra temporary space, and are cleaned up after 24 hours without activity.
+
+- Before an upload starts, Files asks what to do when a file with the same name already exists: keep both with a numbered name, skip it, or report it as an error. The choice applies per file, so the rest of the batch continues, and the upload panel lists skipped and renamed files.
+
+- Files has visible **Upload files**, **Photos & videos**, and **Upload folder** buttons, an **Upload** button above the folder tree that works on phones, and matching menu actions. The photos-and-videos picker opens the photo library on iPhone and iPad and asks Safari for original HEIC photos; the folder button is hidden where the browser cannot pick folders.
+
+- Files supports selecting several files and folders: tap **Select** (or Ctrl/Cmd- and Shift-click on a computer), then move them to another folder or delete them together, or drag the whole selection onto a folder. A summary lists what moved or was deleted and names anything that failed or was skipped.
 
 - Movie and series folders, and movie file names, tagged with a provider ID in Radarr, Sonarr, Plex, Jellyfin, or Emby style, such as `{tmdb-603}`, `[tmdbid-603]`, or `{tvdb-81189}`, identify by that exact ID instead of a title search, in Auto Identify and in Identify. TMDB reads `tmdb` tags; TheTVDB and IMDb tags go to plugins that support them. IDs already saved on an item take precedence, and contradictory tags are ignored.
 
@@ -207,6 +217,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Removed
 
+- The single-request `POST /api/files/upload` route has been removed in favor of the resumable `/api/files/uploads` routes used by the web app.
 - Deprecated kind-specific Entity detail reads have been removed; use `GET /api/entities/{id}` for every Entity kind.
 - Deprecated playback-statistics, Entity-playback mutation, and audio-track play-count routes have been removed in favor of the shared Consumption API.
 - Audio-track detail and saved-queue payloads no longer duplicate embedded artist and album fields outside the Entity's `embedded-audio-metadata` capability.
@@ -215,7 +226,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Hardened security across the server and web app: stricter permission checks for editing items and creating libraries, signed-in access for generated thumbnails and previews, safer handling of artwork links and downloads, a content security policy with sanitized book content in the reader, safer file-manager operations on library roots, read-only libraries and links, size limits for archive pages, required checksums for catalog plugins, an additional per-account sign-in limit, and updated cryptography dependencies.
 - Added opt-in trusted reverse-proxy support with `PRISMEDIA_TRUSTED_PROXIES`.
-- Files uploads accept large video files instead of stopping at the default request size, and the Docker image buffers uploads on the data volume.
+- Files uploads accept large video files instead of stopping at the default request size.
+- Dropping a large folder onto Files uploads every file in it, including folders with more than 100 items, instead of silently uploading only the first batch.
+- Refreshing a library root in Files, or uploading into it, no longer makes the root disappear from the folder tree.
 
 - Gallery, series, season, album, artist, author, book, and comic pages list every item again instead of stopping at the first 250 of each kind. Next and previous in the reader, and Identify reviews of large series, include every item too.
 

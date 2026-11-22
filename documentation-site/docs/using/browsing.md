@@ -70,13 +70,37 @@ The **Files** workspace is the file manager for watched roots.
 From Files you can:
 
 - Open linked catalog entities.
-- Create folders and upload files.
-- Rename and move files or folders.
+- Create folders and upload files and folders, with resumable uploads and a progress panel.
+- Rename and move files or folders, one at a time or several together.
 - Rescan a root, folder, or file.
 - Exclude paths from future scans and remove exclusions later.
 - Delete files or folders when the media mount is writable.
 
 Files opens with folders collapsed. Use Browse for media metadata; use Files for source-folder control.
+
+### Uploading files
+
+Choose a folder, then drop files or folders onto the details pane, or use the upload buttons. Before anything is sent, Files asks what to do when a file with the same name already exists in the destination:
+
+- **Keep both** keeps the existing file and saves the new one with a number, such as `photo (1).jpg`.
+- **Skip** keeps the existing file and does not upload the new one.
+- **Report as error** keeps the existing file and marks the new one as failed.
+
+The choice applies to the whole batch and is remembered for next time. Other files keep uploading either way, and the upload panel lists which files were skipped or renamed.
+
+Each file uploads separately, in pieces of a few megabytes. If the connection drops — for example when a VPN reconnects — the upload pauses, retries on its own, and continues from the last piece the server received instead of starting over. Files that still fail after several retries are marked failed; **Retry** continues them from where they stopped. The upload panel shows overall and per-file progress, speed, and time left, and any file can be cancelled. Keep the page open until uploads finish; leaving the page cancels uploads that have not finished.
+
+**Disk space.** Partial uploads are stored in a hidden `.prismedia-uploads` folder at the top of the library root, on the same disk as the library, and are moved into place when complete. An upload needs free space for its own size on the library disk and no extra temporary space elsewhere. A file never appears in its folder, or in the library, until every byte has arrived. Uploads that receive nothing for 24 hours are deleted automatically. If Prismedia runs behind a reverse proxy, allow request bodies of at least 16 MB so upload pieces are not rejected.
+
+On iPhone and iPad, Safari cannot pick or drop whole folders. Use **Upload files** or **Photos & videos** to choose many photos and videos at once from the photo library or the Files app.
+
+### Moving and deleting several items
+
+Tap **Select** above the folder tree, then tap files and folders to select them; on a computer you can also Ctrl/Cmd-click or Shift-click. The selection bar offers **Select all** for the current folder, **Clear**, and **Actions** → **Move to…** or **Delete permanently**. You can also drag a selection onto a folder. Library roots cannot be moved or deleted. When the operation finishes, a short summary says what moved or was deleted and names anything that failed or was skipped.
+
+### iPhone videos
+
+iPhone videos are usually HEVC (`.mov`). Browsers that can decode HEVC play them with little server work, but a browser that cannot decode HEVC makes the server transcode the video while it plays, which is heavy on a small server. HEIC photos are supported for thumbnails.
 
 ## Managing source media
 

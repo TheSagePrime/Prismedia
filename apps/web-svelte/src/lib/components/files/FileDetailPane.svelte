@@ -4,7 +4,9 @@
     FileArchive,
     Download,
     FolderPlus,
+    FolderUp,
     Image as ImageIcon,
+    Images,
     Pencil,
     RefreshCw,
     ScanLine,
@@ -33,8 +35,8 @@
     onBack?: () => void;
     onRefresh?: () => void;
     onAction?: (action: FileActionId) => void;
-    onUploadFiles?: (files: FileList | null) => void;
-    onUploadFolder?: (files: FileList | null) => void;
+    /** Whether the browser can pick whole folders (not on iPhone or iPad). */
+    canPickFolders?: boolean;
     onExternalDrop?: (dataTransfer: DataTransfer | null) => void;
   }
 
@@ -48,13 +50,10 @@
     onBack,
     onRefresh,
     onAction,
-    onUploadFiles,
-    onUploadFolder,
+    canPickFolders = false,
     onExternalDrop,
   }: Props = $props();
 
-  let fileInput = $state<HTMLInputElement>();
-  let folderInput = $state<HTMLInputElement>();
   let textPreview = $state<string | null>(null);
   let previewError = $state<string | null>(null);
 
@@ -236,7 +235,11 @@
       </Button>
       {#if isDirectory}
         {#if !isReadOnly}
-        <Button variant="ghost" size="sm" type="button" onclick={() => fileInput?.click()}><Upload class="h-3.5 w-3.5" />Upload</Button>
+        <Button variant="ghost" size="sm" type="button" onclick={() => onAction?.("upload")}><Upload class="h-3.5 w-3.5" />Upload files</Button>
+        <Button variant="ghost" size="sm" type="button" onclick={() => onAction?.("upload-media")}><Images class="h-3.5 w-3.5" />Photos & videos</Button>
+        {#if canPickFolders}
+          <Button variant="ghost" size="sm" type="button" onclick={() => onAction?.("upload-folder")}><FolderUp class="h-3.5 w-3.5" />Upload folder</Button>
+        {/if}
         <Button variant="ghost" size="sm" type="button" onclick={() => onAction?.("new-folder")}><FolderPlus class="h-3.5 w-3.5" />New folder</Button>
         {/if}
         <Button variant="ghost" size="sm" type="button" onclick={() => onAction?.("rescan")}><ScanLine class="h-3.5 w-3.5" />Rescan</Button>
@@ -254,22 +257,6 @@
       {/if}
     </div>
     {#if isReadOnly}<p class="px-4 py-2 text-xs text-text-muted">Files are managed by the connected application. Prismedia keeps this library read-only.</p>{/if}
-
-    <input
-      bind:this={fileInput}
-      class="hidden-input"
-      type="file"
-      multiple
-      onchange={(event) => onUploadFiles?.(event.currentTarget.files)}
-    />
-    <input
-      bind:this={folderInput}
-      class="hidden-input"
-      type="file"
-      multiple
-      webkitdirectory
-      onchange={(event) => onUploadFolder?.(event.currentTarget.files)}
-    />
 
     <div class="detail-body">
       {#if previewKind !== "none"}
@@ -395,10 +382,6 @@
   .toolbar-spacer {
     flex: 1 0 0;
     min-width: 0.25rem;
-  }
-
-  .hidden-input {
-    display: none;
   }
 
   .detail-body {

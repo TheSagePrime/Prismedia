@@ -978,6 +978,24 @@ export const FILE_SOURCE_KIND = {
 
 export type FileSourceKindCode = (typeof FILE_SOURCE_KIND)[keyof typeof FILE_SOURCE_KIND];
 
+// source: enum FileUploadConflictPolicy
+export const FILE_UPLOAD_CONFLICT_POLICY = {
+  skip: "skip",
+  keepBoth: "keep-both",
+  fail: "fail",
+} as const;
+
+export type FileUploadConflictPolicyCode = (typeof FILE_UPLOAD_CONFLICT_POLICY)[keyof typeof FILE_UPLOAD_CONFLICT_POLICY];
+
+// source: enum FileUploadOutcome
+export const FILE_UPLOAD_OUTCOME = {
+  uploaded: "uploaded",
+  renamed: "renamed",
+  skipped: "skipped",
+} as const;
+
+export type FileUploadOutcomeCode = (typeof FILE_UPLOAD_OUTCOME)[keyof typeof FILE_UPLOAD_OUTCOME];
+
 // source: enum FingerprintAlgorithm
 export const FINGERPRINT_ALGORITHM = {
   md5: "md5",
@@ -1906,6 +1924,7 @@ export const PROBLEM_CODE = {
   identifyTargetNotEligible: "identify_target_not_eligible",
   indexerInvalid: "indexer_invalid",
   indexerUnreachable: "indexer_unreachable",
+  insufficientStorage: "insufficient_storage",
   integrationTransferConflict: "integration_transfer_conflict",
   integrationTransferInvalid: "integration_transfer_invalid",
   integrationTransferNotFound: "integration_transfer_not_found",
@@ -1954,6 +1973,8 @@ export const PROBLEM_CODE = {
   subtitleSearchFailed: "subtitle_search_failed",
   unknownJobType: "unknown_job_type",
   unsupportedEntityImageRole: "unsupported_entity_image_role",
+  uploadIncomplete: "upload_incomplete",
+  uploadOffsetMismatch: "upload_offset_mismatch",
   userInvalid: "user_invalid",
   userNotFound: "user_not_found",
   videoHlsNotFound: "video_hls_not_found",

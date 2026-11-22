@@ -7,7 +7,7 @@ using Prismedia.Infrastructure.Files;
 
 namespace Prismedia.Infrastructure.Tests;
 
-public sealed class FilesServiceTests : IDisposable {
+public sealed partial class FilesServiceTests : IDisposable {
     private readonly DirectoryInfo _tempRoot = Directory.CreateTempSubdirectory("prismedia-files-");
     private readonly Guid _rootId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
 
@@ -68,22 +68,6 @@ public sealed class FilesServiceTests : IDisposable {
                 CancellationToken.None));
 
         Assert.Equal(Prismedia.Contracts.System.ApiProblemCodes.InvalidPath, error.Code);
-    }
-
-    [Fact]
-    public async Task UploadPreservesNestedRelativePathsUnderTargetFolder() {
-        var service = CreateService();
-        await using var stream = new MemoryStream("cover"u8.ToArray());
-
-        await service.UploadAsync(
-            new FileUploadRequest(_rootId, "Incoming", [
-                new FileUploadItem("Album/Cover.jpg", stream),
-            ]),
-            hideNsfw: false,
-            CancellationToken.None);
-
-        Assert.True(File.Exists(Path.Combine(_tempRoot.FullName, "Incoming", "Album", "Cover.jpg")));
-        Assert.Contains(JobType.ScanLibrary, Queue.Enqueued.Select(job => job.Type));
     }
 
     [Fact]
@@ -276,15 +260,10 @@ public sealed class FilesServiceTests : IDisposable {
         try {
             Directory.CreateSymbolicLink(Path.Combine(_tempRoot.FullName, "linked"), outside.FullName);
             var service = CreateService();
-            await using var stream = new MemoryStream("bad"u8.ToArray());
 
             await Assert.ThrowsAsync<FileOperationException>(() =>
-                service.UploadAsync(
-                    new FileUploadRequest(_rootId, "linked", [
-                        new FileUploadItem("escape.txt", stream),
-                    ]),
-                    hideNsfw: false,
-                    CancellationToken.None));
+                FileUploadTestHelpers.UploadAsync(service, _rootId, "linked", "escape.txt", "bad"u8.ToArray()));
+            Assert.False(File.Exists(Path.Combine(outside.FullName, "escape.txt")));
         } finally {
             outside.Delete(recursive: true);
         }
@@ -348,7 +327,7 @@ public sealed class FilesServiceTests : IDisposable {
 
         Func<Task>[] writes = [
             () => service.CreateFolderAsync(new FileCreateFolderRequest(_rootId, string.Empty, "New"), false, CancellationToken.None),
-            () => service.UploadAsync(new FileUploadRequest(_rootId, string.Empty, [new FileUploadItem("up.txt", stream)]), false, CancellationToken.None),
+            () => service.CreateUploadAsync(new FileUploadCreateRequest(_rootId, string.Empty, "up.txt", 1), false, CancellationToken.None),
             () => service.RenameAsync(new FileRenameRequest(_rootId, "existing.mp4", "renamed.mp4"), false, CancellationToken.None),
             () => service.MoveAsync(new FileMoveRequest(_rootId, "existing.mp4", _rootId, "Moved/existing.mp4"), false, CancellationToken.None),
             () => service.DeleteAsync(new FileDeleteRequest(_rootId, "existing.mp4"), false, CancellationToken.None),
@@ -529,7 +508,8 @@ public sealed class FilesServiceTests : IDisposable {
             new LocalManagedFileStorage(new TestFileMutationGuard()),
             Archives ?? (IFileArchivePreparationService)new FileArchivePreparationService(),
             Queue,
-            new EntitySourcePathMutationCoordinator(SourceOwners, Lifecycle));
+            new EntitySourcePathMutationCoordinator(SourceOwners, Lifecycle),
+            new LocalFileUploadStaging(new TestFileMutationGuard()));
     }
 
     public void Dispose() {

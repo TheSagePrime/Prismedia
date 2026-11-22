@@ -61,6 +61,7 @@ import type {
   CommitRequestParams,
   CommitReviewedManagedRequestInput,
   CommitReviewedRequestParams,
+  CompleteFileUploadParams,
   ConnectionResponse,
   ConsumptionEventCreateRequest,
   ConsumptionStatisticsResponse,
@@ -69,6 +70,7 @@ import type {
   CreateConnectionRequest,
   CreateExternalLibraryMountRequest,
   CreateFileFolderParams,
+  CreateFileUploadParams,
   CreateFirstAdminRequest,
   CreateManagedControlRequest,
   CustomFormatSaveRequest,
@@ -124,6 +126,10 @@ import type {
   FileRenameRequest,
   FileRescanRequest,
   FileRootsResponse,
+  FileUploadCompletion,
+  FileUploadCreateRequest,
+  FileUploadCreateResponse,
+  FileUploadSession,
   GetConsumptionStatisticsParams,
   GetEntityChildReferencesParams,
   GetEntityChildrenParams,
@@ -303,6 +309,7 @@ import type {
   SetupStatusResponse,
   StartBulkIdentifyParams,
   StashScraperListing,
+  Stream,
   SubtitleProviderTestResponse,
   TrackManagedHoldingRequest,
   TranscodeCacheStatusResponse,
@@ -315,6 +322,7 @@ import type {
   UpdateOpenSubtitlesConfigurationRequest,
   UpdateOwnProfileRequest,
   UploadAcquisitionTorrentBody,
+  UploadFileChunkParams,
   UserCreateRequest,
   UserLibraryAccessUpdateRequest,
   UserResponse,
@@ -8651,32 +8659,205 @@ export const removeFileExclusion = async (params: RemoveFileExclusionParams, opt
 
 
 
-export type uploadFilesResponse200 = {
-  data: FileOperationResponse
+export type createFileUploadResponse200 = {
+  data: FileUploadCreateResponse
   status: 200
 }
 
-export type uploadFilesResponseSuccess = (uploadFilesResponse200) & {
+export type createFileUploadResponseSuccess = (createFileUploadResponse200) & {
   headers: Headers;
 };
 ;
 
-export type uploadFilesResponse = (uploadFilesResponseSuccess)
+export type createFileUploadResponse = (createFileUploadResponseSuccess)
 
-export const getUploadFilesUrl = () => {
+export const getCreateFileUploadUrl = (params?: CreateFileUploadParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/files/upload`
+  return stringifiedParams.length > 0 ? `/api/files/uploads?${stringifiedParams}` : `/api/files/uploads`
 }
 
 /**
- * @summary Uploads files into a watched-root folder.
+ * @summary Starts a resumable upload of one file into a watched-root folder.
  */
-export const uploadFiles = async ( options?: RequestInit): Promise<uploadFilesResponse> => {
+export const createFileUpload = async (fileUploadCreateRequest: FileUploadCreateRequest,
+    params?: CreateFileUploadParams, options?: RequestInit): Promise<createFileUploadResponse> => {
 
-  return orvalFetch<uploadFilesResponse>(getUploadFilesUrl(),
+  return orvalFetch<createFileUploadResponse>(getCreateFileUploadUrl(params),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      fileUploadCreateRequest,)
+  }
+);}
+
+
+
+export type getFileUploadResponse200 = {
+  data: FileUploadSession
+  status: 200
+}
+
+export type getFileUploadResponseSuccess = (getFileUploadResponse200) & {
+  headers: Headers;
+};
+;
+
+export type getFileUploadResponse = (getFileUploadResponseSuccess)
+
+export const getGetFileUploadUrl = (id: string,) => {
+
+
+
+
+  return `/api/files/uploads/${id}`
+}
+
+/**
+ * @summary Gets how many bytes of a resumable upload have been stored.
+ */
+export const getFileUpload = async (id: string, options?: RequestInit): Promise<getFileUploadResponse> => {
+
+  return orvalFetch<getFileUploadResponse>(getGetFileUploadUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type cancelFileUploadResponse204 = {
+  data: void
+  status: 204
+}
+
+export type cancelFileUploadResponseSuccess = (cancelFileUploadResponse204) & {
+  headers: Headers;
+};
+;
+
+export type cancelFileUploadResponse = (cancelFileUploadResponseSuccess)
+
+export const getCancelFileUploadUrl = (id: string,) => {
+
+
+
+
+  return `/api/files/uploads/${id}`
+}
+
+/**
+ * @summary Cancels a resumable upload and deletes its partial bytes.
+ */
+export const cancelFileUpload = async (id: string, options?: RequestInit): Promise<cancelFileUploadResponse> => {
+
+  return orvalFetch<cancelFileUploadResponse>(getCancelFileUploadUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type uploadFileChunkResponse200 = {
+  data: FileUploadSession
+  status: 200
+}
+
+export type uploadFileChunkResponseSuccess = (uploadFileChunkResponse200) & {
+  headers: Headers;
+};
+;
+
+export type uploadFileChunkResponse = (uploadFileChunkResponseSuccess)
+
+export const getUploadFileChunkUrl = (id: string,
+    params: UploadFileChunkParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/files/uploads/${id}/chunks?${stringifiedParams}` : `/api/files/uploads/${id}/chunks`
+}
+
+/**
+ * @summary Stores one chunk of a resumable upload starting at the given byte offset.
+ */
+export const uploadFileChunk = async (id: string,
+    uploadFileChunkBody: Blob,
+    params: UploadFileChunkParams, options?: RequestInit): Promise<uploadFileChunkResponse> => {
+
+  return orvalFetch<uploadFileChunkResponse>(getUploadFileChunkUrl(id,params),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream', ...options?.headers },
+    body: JSON.stringify(
+      uploadFileChunkBody,)
+  }
+);}
+
+
+
+export type completeFileUploadResponse200 = {
+  data: FileUploadCompletion
+  status: 200
+}
+
+export type completeFileUploadResponseSuccess = (completeFileUploadResponse200) & {
+  headers: Headers;
+};
+;
+
+export type completeFileUploadResponse = (completeFileUploadResponseSuccess)
+
+export const getCompleteFileUploadUrl = (id: string,
+    params?: CompleteFileUploadParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/files/uploads/${id}/complete?${stringifiedParams}` : `/api/files/uploads/${id}/complete`
+}
+
+/**
+ * @summary Moves a fully received upload into place, applying its conflict choice.
+ */
+export const completeFileUpload = async (id: string,
+    params?: CompleteFileUploadParams, options?: RequestInit): Promise<completeFileUploadResponse> => {
+
+  return orvalFetch<completeFileUploadResponse>(getCompleteFileUploadUrl(id,params),
   {
     ...options,
     method: 'POST'

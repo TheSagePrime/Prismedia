@@ -6,33 +6,59 @@ import {
   fileContentUrl,
   fileDownloadUrl,
   prepareFolderArchiveDownload,
+  createFileUploadTransport,
   removeFileExclusion,
-  uploadFiles,
 } from "./files";
+import { FILE_UPLOAD_CONFLICT_POLICY, FILE_UPLOAD_OUTCOME, PROBLEM_CODE } from "./generated/codes";
+import { UploadTransportError } from "$lib/files/upload-queue";
 
 describe("files API", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("posts watched-root uploads as multipart data without a json content type", async () => {
-    const fetchMock = mockFetch({ scansQueued: 1 });
+  it("starts resumable uploads with the declared size and conflict choice", async () => {
+    const fetchMock = mockFetch({
+      session: { id: "u1", rootId: "root-1", relativePath: "Incoming/Season 1/clip.mp4", sizeBytes: "4", receivedBytes: "0", maxChunkBytes: "67108864", expiresAt: "2026-01-01T00:00:00Z" },
+      completion: null,
+    });
+    const transport = createFileUploadTransport();
 
-    await uploadFiles("root-1", "Incoming", [
-      { file: new File(["clip"], "clip.mp4"), relativePath: "Season 1/clip.mp4" },
-    ]);
+    const created = await transport.create({
+      rootId: "root-1",
+      targetPath: "Incoming",
+      relativePath: "Season 1/clip.mp4",
+      sizeBytes: 4,
+      conflictPolicy: FILE_UPLOAD_CONFLICT_POLICY.keepBoth,
+    }, new AbortController().signal);
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("/api/files/upload");
+    expect(url).toBe("/api/files/uploads");
     expect(init.method).toBe("POST");
-    expect(init.body).toBeInstanceOf(FormData);
-    expect(new Headers(init.headers).has("Content-Type")).toBe(false);
+    expect(JSON.parse(init.body as string)).toMatchObject({ relativePath: "Season 1/clip.mp4", sizeBytes: 4, conflictPolicy: "keep-both" });
+    expect(created.session).toEqual({ id: "u1", receivedBytes: 0, maxChunkBytes: 67108864 });
+  });
 
-    const form = init.body as FormData;
-    expect(form.get("rootId")).toBe("root-1");
-    expect(form.get("targetPath")).toBe("Incoming");
-    expect(form.get("relativePaths")).toBe("Season 1/clip.mp4");
-    expect(form.get("files")).toBeInstanceOf(File);
+  it("reports skipped files as an immediate completion", async () => {
+    mockFetch({ session: null, completion: { outcome: FILE_UPLOAD_OUTCOME.skipped, relativePath: "a.jpg", scansQueued: "0" } });
+
+    const created = await createFileUploadTransport().create({
+      rootId: "root-1", targetPath: "", relativePath: "a.jpg", sizeBytes: 1, conflictPolicy: FILE_UPLOAD_CONFLICT_POLICY.skip,
+    }, new AbortController().signal);
+
+    expect(created).toEqual({ session: null, completion: { outcome: FILE_UPLOAD_OUTCOME.skipped, relativePath: "a.jpg" } });
+  });
+
+  it("maps problem responses and dropped connections to upload transport errors", async () => {
+    mockFetchSequence([{ code: PROBLEM_CODE.fileConflict, message: "A file or folder already exists at a.jpg." }], [409]);
+    const transport = createFileUploadTransport();
+    const conflict = await transport.complete("u1", new AbortController().signal).catch((error: unknown) => error);
+    expect(conflict).toBeInstanceOf(UploadTransportError);
+    expect(conflict).toMatchObject({ status: 409, problemCode: PROBLEM_CODE.fileConflict });
+
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
+    const dropped = await transport.status("u1", new AbortController().signal).catch((error: unknown) => error);
+    expect(dropped).toMatchObject({ status: 0 });
   });
 
   it("builds encoded file content urls", () => {
