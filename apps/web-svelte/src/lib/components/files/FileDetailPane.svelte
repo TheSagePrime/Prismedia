@@ -17,7 +17,8 @@
   } from "@lucide/svelte";
   import { Info } from "@lucide/svelte";
   import { ENTITY_KIND, FILE_ENTRY_KIND } from "$lib/api/generated/codes";
-  import type { FileDetail } from "$lib/api/files";
+  import type { FileDetail, FileEntry } from "$lib/api/files";
+  import FolderTile from "./FolderTile.svelte";
   import { fileContentUrl } from "$lib/api/files";
   import type { FileActionId } from "$lib/files/file-actions";
   import EntityGrid from "$lib/components/entities/EntityGrid.svelte";
@@ -37,7 +38,10 @@
     onAction?: (action: FileActionId) => void;
     /** Whether the browser can pick whole folders (not on iPhone or iPad). */
     canPickFolders?: boolean;
-    onExternalDrop?: (dataTransfer: DataTransfer | null) => void;
+    /** Entries of the selected folder, shown as a thumbnail grid. */
+    folderEntries?: FileEntry[];
+    /** Opens a folder-grid entry. */
+    onOpenEntry?: (entry: FileEntry) => void;
   }
 
   let {
@@ -51,7 +55,8 @@
     onRefresh,
     onAction,
     canPickFolders = false,
-    onExternalDrop,
+    folderEntries = [],
+    onOpenEntry,
   }: Props = $props();
 
   let textPreview = $state<string | null>(null);
@@ -160,18 +165,6 @@
     return rows;
   });
 
-  function handleDragOver(event: DragEvent): void {
-    if (!event.dataTransfer?.types.includes("Files")) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = isReadOnly ? "none" : "copy";
-  }
-
-  function handleDrop(event: DragEvent): void {
-    if (!event.dataTransfer?.types.includes("Files")) return;
-    event.preventDefault();
-    if (!isReadOnly) onExternalDrop?.(event.dataTransfer);
-  }
-
   $effect(() => {
     textPreview = null;
     previewError = null;
@@ -198,7 +191,7 @@
   });
 </script>
 
-<section class="detail-pane" aria-label="File details" ondragover={handleDragOver} ondrop={handleDrop}>
+<section class="detail-pane" aria-label="File details">
   <div class="detail-header">
     {#if mobile}
       <Button variant="ghost" size="sm" class="size-7 p-0" type="button" onclick={onBack} aria-label="Back to folders">←</Button>
@@ -278,6 +271,22 @@
         </div>
       {/if}
 
+      {#if isDirectory && folderEntries.length > 0}
+        <div class="folder-grid" aria-label={`Contents of ${entry.name}`}>
+          {#each folderEntries as child (child.path)}
+            <FolderTile
+              name={child.name}
+              directory={child.kind === FILE_ENTRY_KIND.directory}
+              thumbnailUrl={child.thumbnailUrl}
+              mimeType={child.mimeType}
+              onclick={() => onOpenEntry?.(child)}
+            />
+          {/each}
+        </div>
+      {:else if isDirectory}
+        <p class="folder-empty">This folder is empty. Drop files here or use Upload to add some.</p>
+      {/if}
+
       <section class="properties-card" aria-labelledby="file-properties-heading">
         {#if heroCard}
           <div class="entity-hero" aria-label="Associated entity">
@@ -287,7 +296,8 @@
         <MetadataCard title="Properties" icon={Info} rows={fileMetaRows} />
       </section>
 
-      {#if linkedCards.length > 0}
+      <!-- A folder's own grid already shows what it contains; the linked list stays for files. -->
+      {#if linkedCards.length > 0 && !(isDirectory && folderEntries.length > 0)}
         <div class="section-label">Linked entities</div>
         <div class="linked-grid">
           <EntityGrid
@@ -393,6 +403,23 @@
     display: flex;
     flex-direction: column;
     gap: 0.65rem;
+  }
+
+  .folder-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
+  .folder-empty {
+    margin: 0;
+    padding: 1.5rem 0.5rem;
+    border: 1px dashed var(--color-border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    text-align: center;
+    font-size: 0.8rem;
   }
 
   .section-label {

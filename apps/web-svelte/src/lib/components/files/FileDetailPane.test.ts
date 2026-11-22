@@ -78,6 +78,26 @@ describe("FileDetailPane", () => {
   });
 });
 
+describe("FileDetailPane folder grid", () => {
+  it("shows a folder's contents as thumbnails and opens the chosen entry", async () => {
+    const onOpenEntry = vi.fn();
+    const folder = fileDetail({
+      entry: { ...fileDetail().entry, path: "Photos", name: "Photos", kind: "directory", sizeBytes: null, mimeType: null },
+    });
+    const entries = [
+      { rootId: "root-1", path: "Photos/Trip", name: "Trip", kind: "directory" as const, sizeBytes: null, mimeType: null, modifiedAt: null, thumbnailUrl: "/assets/trip.jpg" },
+      { rootId: "root-1", path: "Photos/beach.jpg", name: "beach.jpg", kind: "file" as const, sizeBytes: 10, mimeType: "image/jpeg", modifiedAt: null, thumbnailUrl: null },
+    ];
+    render(FileDetailPane, { props: { detail: folder, folderEntries: entries, onOpenEntry } });
+
+    const tile = screen.getByRole("button", { name: "Folder Trip" });
+    expect(tile.querySelector("img")?.getAttribute("src")).toBe("/assets/trip.jpg");
+    await fireEvent.click(screen.getByRole("button", { name: "beach.jpg" }));
+
+    expect(onOpenEntry).toHaveBeenCalledWith(entries[1]);
+  });
+});
+
 function fileDetail(overrides: Partial<FileDetail> = {}): FileDetail {
   return {
     entry: {

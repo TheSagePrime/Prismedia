@@ -20,9 +20,11 @@
     onDismiss: () => void;
     /** Lifts the panel above the folder-download status when both are shown. */
     raised?: boolean;
+    /** Dropped folders are still being read; their files join the list shortly. */
+    preparing?: boolean;
   }
 
-  let { snapshot, onCancel, onCancelAll, onRetry, onRetryFailed, onClearFinished, onDismiss, raised = false }: Props = $props();
+  let { snapshot, onCancel, onCancelAll, onRetry, onRetryFailed, onClearFinished, onDismiss, raised = false, preparing = false }: Props = $props();
 
   /** Rendering stays bounded for drops of thousands of files; totals still cover every file. */
   const VISIBLE_ROWS = 200;
@@ -32,7 +34,9 @@
   const finished = $derived(counts.done + counts.failed + counts.cancelled);
   const total = $derived(snapshot.items.length);
   const heading = $derived(
-    snapshot.active
+    preparing && total === 0
+      ? "Reading dropped files…"
+      : snapshot.active
       ? `Uploading ${Math.min(finished + 1, total).toLocaleString()} of ${total.toLocaleString()}`
       : counts.failed > 0
         ? `${counts.failed.toLocaleString()} upload${counts.failed === 1 ? "" : "s"} need attention`
@@ -102,7 +106,7 @@
     >
       {#if expanded}<ChevronDown class="h-4 w-4" />{:else}<ChevronUp class="h-4 w-4" />{/if}
     </Button>
-    {#if !snapshot.active}
+    {#if !snapshot.active && !preparing}
       <Button variant="ghost" size="icon-sm" type="button" aria-label="Close uploads" onclick={onDismiss}>
         <X class="h-4 w-4" />
       </Button>

@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- Dragging files or folders from your computer anywhere over the Files page shows a clear overlay naming the folder that will receive them (or explaining that a library is read-only). Dropping starts the upload straight away with your last duplicate-name choice, and the upload panel appears immediately, even while large folders are still being read.
+
 - A simple library profile, on by default (`PRISMEDIA_FEATURE_PROFILE=simple`), keeps Prismedia to a private photo and video library: folders, images, videos, people, tags, and collections. Movies, series, music, books, studios, the calendar, requests and downloads, plugins, Identify, stats, and developer pages are hidden, and their background work (automatic identification, metadata and subtitle downloads, plugin updates, download-manager checks) stops. No data is removed; `PRISMEDIA_FEATURE_PROFILE=full` turns everything back on.
 
 - Files shows each folder's contents as a thumbnail grid, and every folder carries a preview from the first photo or video inside it.
