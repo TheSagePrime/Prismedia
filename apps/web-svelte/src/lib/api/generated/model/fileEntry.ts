@@ -21,4 +21,6 @@ export interface FileEntry {
   /** @nullable */
   modifiedAt: string | null;
   excluded?: boolean;
+  /** @nullable */
+  thumbnailUrl?: string | null;
 }

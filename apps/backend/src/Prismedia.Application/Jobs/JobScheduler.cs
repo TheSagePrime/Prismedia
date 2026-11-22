@@ -47,19 +47,29 @@ public sealed class JobScheduler(
     /// the whole tick; an unavailable backup or settings service cannot starve acquisition recovery.
     /// </summary>
     internal async Task RunTickAsync(CancellationToken cancellationToken) {
+        var features = ResolveFeatures();
+        bool On(ProductFeature feature) => features?.IsEnabled(feature) ?? true;
+        // Steps that belong to a switched-off area are left out entirely, so hidden features
+        // schedule no plugin updates, acquisition recovery, or audiobook backfill.
         Func<CancellationToken, Task>[] steps = [
             ScheduleRecurringScansAsync,
             ScheduleRecurringCollectionRefreshAsync,
             ScheduleRecurringBackupsAsync,
-            SchedulePluginUpdatesAsync,
-            ScheduleAcquisitionMonitorAsync,
-            RecoverHeldTvImportsAsync,
-            RecoverSupersededHeldAcquisitionsAsync,
-            RecoverDownloadedCompletionJobsAsync,
-            RecoverStuckSearchesAsync,
+            .. On(ProductFeature.Plugins) ? [SchedulePluginUpdatesAsync] : Array.Empty<Func<CancellationToken, Task>>(),
+            .. On(ProductFeature.Acquisition)
+                ? [
+                    ScheduleAcquisitionMonitorAsync,
+                    RecoverHeldTvImportsAsync,
+                    RecoverSupersededHeldAcquisitionsAsync,
+                    RecoverDownloadedCompletionJobsAsync,
+                    RecoverStuckSearchesAsync,
+                ]
+                : Array.Empty<Func<CancellationToken, Task>>(),
             ScheduleRecycleBinCleanupAsync,
             ScheduleGridThumbnailSweepAsync,
-            ScheduleBookAlignmentBackfillAsync,
+            .. On(ProductFeature.Books) && On(ProductFeature.Audio)
+                ? [ScheduleBookAlignmentBackfillAsync]
+                : Array.Empty<Func<CancellationToken, Task>>(),
         ];
         foreach (var step in steps) {
             cancellationToken.ThrowIfCancellationRequested();
@@ -71,6 +81,11 @@ public sealed class JobScheduler(
                 logger.LogError(ex, "Scheduler step {Step} failed; continuing independent maintenance.", step.Method.Name);
             }
         }
+    }
+
+    private Features.IProductFeatures? ResolveFeatures() {
+        using var scope = scopeFactory.CreateScope();
+        return scope.ServiceProvider.GetService<Features.IProductFeatures>();
     }
 
     private async Task RecoverSupersededHeldAcquisitionsAsync(CancellationToken cancellationToken) {

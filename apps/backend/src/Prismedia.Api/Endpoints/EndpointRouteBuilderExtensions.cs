@@ -33,6 +33,7 @@ public static class EndpointRouteBuilderExtensions {
         routes.MapLibraryEndpoints();
         routes.MapFilesEndpoints();
         routes.MapUpdateCheckEndpoints();
+        routes.MapProductFeatureEndpoints();
         routes.MapPluginEndpoints();
         routes.MapConnectionEndpoints();
         routes.MapIntegrationTransferEndpoints();

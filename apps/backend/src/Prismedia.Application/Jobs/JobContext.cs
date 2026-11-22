@@ -8,11 +8,23 @@ namespace Prismedia.Application.Jobs;
 /// </summary>
 public sealed class JobContext {
     private readonly IJobQueueService _queue;
+    private readonly Features.IProductFeatures? _features;
 
-    public JobContext(JobRunSnapshot job, IJobQueueService queue) {
+    /// <summary>Creates the context for one claimed job.</summary>
+    /// <param name="job">Claimed job run.</param>
+    /// <param name="queue">Queue used for progress and downstream work.</param>
+    /// <param name="features">
+    /// Enabled product areas. Downstream jobs owned by a switched-off area are not queued, so a
+    /// library scan does not schedule identification or other hidden work.
+    /// </param>
+    public JobContext(JobRunSnapshot job, IJobQueueService queue, Features.IProductFeatures? features = null) {
         Job = job;
         _queue = queue;
+        _features = features;
     }
+
+    private bool IsAllowed(JobType type) =>
+        _features is null || Features.ProductFeatureJobPolicy.IsAllowed(_features, type);
 
     /// <summary>
     /// The claimed job run this handler is processing.
@@ -29,10 +41,14 @@ public sealed class JobContext {
 
     /// <summary>
     /// Enqueues a downstream job, skipping if a pending job already exists for the same type and target.
-    /// Returns the snapshot when enqueued, or null when deduplicated away.
+    /// Returns the snapshot when enqueued, or null when deduplicated away or owned by a switched-off area.
     /// </summary>
     public async Task<JobRunSnapshot?> EnqueueIfNeededAsync(EnqueueJobRequest request, CancellationToken cancellationToken = default) {
         await ThrowIfCancelledAsync(cancellationToken);
+        if (!IsAllowed(request.Type)) {
+            return null;
+        }
+
         if (Job.GraphId is null &&
             await _queue.HasPendingAsync(request.Type, request.TargetEntityId, cancellationToken)) {
             return null;
@@ -66,7 +82,8 @@ public sealed class JobContext {
     /// </summary>
     public async Task<int> EnqueueBatchAsync(IReadOnlyList<EnqueueJobRequest> requests, CancellationToken cancellationToken = default) {
         await ThrowIfCancelledAsync(cancellationToken);
-        return await _queue.EnqueueChildBatchAsync(Job, requests, cancellationToken);
+        var allowed = requests.Where(request => IsAllowed(request.Type)).ToArray();
+        return allowed.Length == 0 ? 0 : await _queue.EnqueueChildBatchAsync(Job, allowed, cancellationToken);
     }
 
     private async Task ThrowIfCancelledAsync(CancellationToken cancellationToken) {

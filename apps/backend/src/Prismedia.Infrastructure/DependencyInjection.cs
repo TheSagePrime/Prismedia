@@ -72,6 +72,12 @@ public static class DependencyInjection {
             throw new InvalidOperationException("Prismedia requires DATABASE_URL or ConnectionStrings:Prismedia.");
 
         var connectionString = PostgresConnectionString.Normalize(configuredConnectionString);
+        // One setting chooses which optional product areas run: "simple" (default) keeps folders,
+        // images, videos, people, tags, and collections; "full" turns every area back on.
+        services.AddSingleton<Prismedia.Application.Features.IProductFeatures>(
+            new Prismedia.Application.Features.ProductFeatureSet(
+                Prismedia.Application.Features.ProductFeatureSet.ParseProfile(
+                    configuration["PRISMEDIA_FEATURE_PROFILE"] ?? configuration["Prismedia:FeatureProfile"])));
         var pathBase = contentRootPath ?? Directory.GetCurrentDirectory();
         var dataDir = NormalizePath(configuration["PRISMEDIA_DATA_DIR"] ??
             configuration["Prismedia:DataDir"] ??

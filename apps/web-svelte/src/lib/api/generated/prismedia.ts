@@ -266,6 +266,7 @@ import type {
   PreviewCollectionRulesParams,
   PreviewManagedControlsParams,
   ProblemDetails,
+  ProductFeaturesResponse,
   ProviderLibraryConnection,
   RatingUpdateRequest,
   ReleaseCalendarEvent,
@@ -1537,6 +1538,42 @@ export const getGetChangelogUrl = () => {
 export const getChangelog = async ( options?: RequestInit): Promise<getChangelogResponse> => {
 
   return orvalFetch<getChangelogResponse>(getGetChangelogUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type getProductFeaturesResponse200 = {
+  data: ProductFeaturesResponse
+  status: 200
+}
+
+export type getProductFeaturesResponseSuccess = (getProductFeaturesResponse200) & {
+  headers: Headers;
+};
+;
+
+export type getProductFeaturesResponse = (getProductFeaturesResponseSuccess)
+
+export const getGetProductFeaturesUrl = () => {
+
+
+
+
+  return `/api/features`
+}
+
+/**
+ * @summary Lists the optional product areas this install runs.
+ */
+export const getProductFeatures = async ( options?: RequestInit): Promise<getProductFeaturesResponse> => {
+
+  return orvalFetch<getProductFeaturesResponse>(getGetProductFeaturesUrl(),
   {
     ...options,
     method: 'GET'

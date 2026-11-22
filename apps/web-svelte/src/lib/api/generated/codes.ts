@@ -962,6 +962,14 @@ export const SUBTITLE_SOURCE = {
 
 export type SubtitleSourceCode = (typeof SUBTITLE_SOURCE)[keyof typeof SUBTITLE_SOURCE];
 
+// source: enum FeatureProfile
+export const FEATURE_PROFILE = {
+  simple: "simple",
+  full: "full",
+} as const;
+
+export type FeatureProfileCode = (typeof FEATURE_PROFILE)[keyof typeof FEATURE_PROFILE];
+
 // source: enum FileEntryKind
 export const FILE_ENTRY_KIND = {
   directory: "directory",
@@ -1544,6 +1552,22 @@ export const PLUGIN_SEARCH_FIELD_TYPE = {
 } as const;
 
 export type PluginSearchFieldTypeCode = (typeof PLUGIN_SEARCH_FIELD_TYPE)[keyof typeof PLUGIN_SEARCH_FIELD_TYPE];
+
+// source: enum ProductFeature
+export const PRODUCT_FEATURE = {
+  moviesAndSeries: "movies-series",
+  audio: "audio",
+  books: "books",
+  studios: "studios",
+  calendar: "calendar",
+  acquisition: "acquisition",
+  plugins: "plugins",
+  identify: "identify",
+  stats: "stats",
+  developerTools: "developer-tools",
+} as const;
+
+export type ProductFeatureCode = (typeof PRODUCT_FEATURE)[keyof typeof PRODUCT_FEATURE];
 
 // source: enum ProgressUnit
 export const PROGRESS_UNIT = {

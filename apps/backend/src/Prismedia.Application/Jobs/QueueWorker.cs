@@ -213,6 +213,20 @@ public sealed class QueueWorker(
     private async Task ProcessJobAsync(JobRunSnapshot job, CancellationToken stoppingToken) {
         await using var scope = scopeFactory.CreateAsyncScope();
         var queue = scope.ServiceProvider.GetRequiredService<IJobQueueService>();
+        var features = scope.ServiceProvider.GetService<Features.IProductFeatures>();
+        if (features is not null && !Features.ProductFeatureJobPolicy.IsAllowed(features, job.Type)) {
+            // Work queued before an area was switched off finishes without running, so hidden
+            // features never reach plugins, metadata providers, or download clients.
+            logger.LogInformation(
+                "Skipped {JobType} because its feature is turned off in the {Profile} profile.",
+                job.Type.ToCode(),
+                features.Profile.ToCode());
+            await MutateJobWithFreshQueueAsync(
+                freshQueue => freshQueue.CompleteAsync(job.Id, "Skipped: this feature is turned off", stoppingToken),
+                stoppingToken);
+            return;
+        }
+
         var definition = JobDefinitionRegistry.Get(job.Type);
         var handler = scope.ServiceProvider.GetService(definition.HandlerType) as IJobHandler;
 
@@ -233,7 +247,7 @@ public sealed class QueueWorker(
         using var monitorCancellation = new CancellationTokenSource();
         var cancellationMonitor = MonitorJobCancellationAsync(job.Id, jobCancellation, monitorCancellation.Token);
         try {
-            var context = new JobContext(job, queue);
+            var context = new JobContext(job, queue, features);
             await handler.HandleAsync(context, jobCancellation.Token);
             jobCancellation.Token.ThrowIfCancellationRequested();
             await MutateJobWithFreshQueueAsync(
