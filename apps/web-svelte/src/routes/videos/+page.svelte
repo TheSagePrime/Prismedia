@@ -2,6 +2,12 @@
   import { Film } from "@lucide/svelte";
   import EntityIndexPage from "$lib/components/entities/EntityIndexPage.svelte";
   import { ENTITY_KIND } from "$lib/entities/entity-codes";
+  import { productFeatures } from "$lib/features/product-features.svelte";
+  import { videoListKinds } from "$lib/features/product-features";
+
+  // With movies and series switched off, videos the scanner filed as movies or episodes are listed
+  // here too, so every video on disk stays reachable.
+  const listKinds = videoListKinds(productFeatures.enabled);
 </script>
 
 <EntityIndexPage
@@ -14,4 +20,5 @@
   errorMessage="Failed to load videos."
   initialMediaWall
   enableFeedView
+  listKind={listKinds.join(",")}
 />

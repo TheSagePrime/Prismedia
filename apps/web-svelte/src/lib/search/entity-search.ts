@@ -5,6 +5,9 @@ import {
   labelForEntityKind,
 } from "$lib/entities/entity-codes";
 import { resolveEntityHref } from "$lib/entities/entity-routes";
+import { ENTITY_KIND } from "$lib/api/generated/codes";
+import { productFeatures } from "$lib/features/product-features.svelte";
+import { isKindEnabled, isPlainVideoKind } from "$lib/features/product-features";
 import {
   ALL_SEARCH_KINDS,
   type SearchEntityKind,
@@ -56,7 +59,7 @@ export async function searchEntities(options: EntitySearchOptions): Promise<Sear
     .filter((item): item is SearchResultItem => Boolean(item));
 
   const continuation: SearchContinuation = {
-    requests: [], expandedSourceIds: [], kinds: [...(options.kinds ?? ALL_SEARCH_KINDS)],
+    requests: [], expandedSourceIds: [], kinds: [...(options.kinds ?? availableSearchKinds())],
     includeRelated: options.includeRelated !== false && options.relatedSourceLimit !== 0,
     relatedLimit: options.relatedLimitPerSource ?? DEFAULT_RELATED_LIMIT_PER_SOURCE,
     batchSize: Math.max(1, options.relatedSourceLimit ?? DEFAULT_RELATED_SOURCE_LIMIT),
@@ -148,7 +151,11 @@ export function entityToSearchItem(
   matchType: SearchResultItem["matchType"] = "direct",
   relatedTo?: SearchRelatedEntity,
 ): SearchResultItem | null {
-  const kind = toSearchKind(entity.kind);
+  const enabled = productFeatures.enabled;
+  if (!isKindEnabled(entity.kind, enabled)) return null;
+  // With movies and series switched off, movie and episode files are listed and opened as videos.
+  const plainVideo = isPlainVideoKind(entity.kind, enabled);
+  const kind = toSearchKind(plainVideo ? ENTITY_KIND.video : entity.kind);
   const href = resolveEntityHref(entity.kind, entity.id);
   if (!kind || !href) return null;
 
@@ -164,8 +171,8 @@ export function entityToSearchItem(
     relatedTo,
     score: matchType === "direct" ? 2 : 1,
     subtitle: relatedTo
-      ? `${labelForEntityKind(entity.kind)} · Related to ${relatedTo.title}`
-      : labelForEntityKind(entity.kind),
+      ? `${labelForEntityKind(kind)} · Related to ${relatedTo.title}`
+      : labelForEntityKind(kind),
     title: entity.title,
   };
 }
@@ -176,7 +183,7 @@ function toSearchResponse(
   items: SearchResultItem[],
   kinds?: Iterable<SearchEntityKind>,
 ): SearchResponse {
-  const allowedKinds = new Set(kinds ?? ALL_SEARCH_KINDS);
+  const allowedKinds = new Set(kinds ?? availableSearchKinds());
   const groups = new Map<SearchEntityKind, SearchResultItem[]>();
 
   for (const item of items) {
@@ -201,6 +208,13 @@ function toResultGroup(kind: SearchEntityKind, items: SearchResultItem[]): Searc
   };
 }
 
+
+/** Search kinds whose product area is on for this install. */
+export function availableSearchKinds(): SearchEntityKind[] {
+  // Movie and episode files are grouped under Videos when movies and series are switched off.
+  return ALL_SEARCH_KINDS.filter((kind) =>
+    isKindEnabled(kind, productFeatures.enabled) && !isPlainVideoKind(kind, productFeatures.enabled));
+}
 
 function toSearchKind(kind: string): SearchEntityKind | null {
   return (ALL_SEARCH_KINDS as readonly string[]).includes(kind) ? (kind as SearchEntityKind) : null;

@@ -13,6 +13,9 @@
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import AudioVidStackPlayer from "$lib/components/AudioVidStackPlayer.svelte";
   import { provideSession } from "$lib/stores/session.svelte";
+  import FeatureUnavailable from "$lib/components/FeatureUnavailable.svelte";
+  import { productFeatures } from "$lib/features/product-features.svelte";
+  import { isPathEnabled } from "$lib/features/product-features";
 
   import { type NsfwMode, parseNsfwModeCookie } from "$lib/nsfw/cookie";
   import { provideNsfw } from "$lib/nsfw/store.svelte";
@@ -44,6 +47,9 @@
   };
 
   let { data, children: pageContent } = $props();
+  // svelte-ignore state_referenced_locally -- enabled areas are fixed per server boot.
+  productFeatures.set(data.productFeatures ?? null);
+  const pageAvailable = $derived(isPathEnabled(page.url.pathname, productFeatures.enabled));
   const layoutData = $derived({ ...defaultLayoutData, ...data });
 
   // Wire all context providers once at the root. Session comes first so downstream
@@ -309,7 +315,7 @@
   -->
   <div class="native-status-scrim" aria-hidden="true"></div>
   <main data-native-content>
-    {@render pageContent()}
+    {#if pageAvailable}{@render pageContent()}{:else}<FeatureUnavailable />{/if}
   </main>
 {:else}
   <div
@@ -338,7 +344,7 @@
     >
       <CanvasHeader />
       <div class={cn("flex-1 p-5", downloadsWorkspace && "min-h-0 overflow-hidden")}>
-        {@render pageContent()}
+        {#if pageAvailable}{@render pageContent()}{:else}<FeatureUnavailable />{/if}
       </div>
     </main>
 

@@ -59,6 +59,11 @@
      * book type/format. Spread after the user's filters so the lock always wins.
      */
     lockedServerQuery?: Partial<EntityGridServerQuery>;
+    /**
+     * Comma-separated kinds to list when the page shows more than its own kind, such as Videos also
+     * listing movie and episode files. Defaults to `kind`.
+     */
+    listKind?: string;
     /** Hide the book type/format filter chips (for routes that already lock those filters). */
     lockBookFilters?: boolean;
     prefsKey: string;
@@ -87,6 +92,7 @@
     initialMediaWall = false,
     kind,
     lockedServerQuery,
+    listKind,
     lockBookFilters = false,
     prefsKey,
     resolveHref,
@@ -161,7 +167,7 @@
     }
   }
   const page = new EntityIndexPageState({
-    getKind: () => kind,
+    getKind: () => listKind ?? kind,
     getHideNsfw: () => nsfw.mode === "off",
     resolveHref: (item) => resolveHref?.(item),
     // Static per-route literal; capture once at construction.

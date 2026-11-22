@@ -1,6 +1,7 @@
 import { appShellSections } from "$lib/components/app-shell-sections";
 import type { AppRouteId } from "$lib/app-routes";
 import { colors } from "@prismedia/ui-svelte";
+import { isPathEnabled, type EnabledFeatures } from "$lib/features/product-features";
 
 /**
  * A single navigable destination known to the app. The catalog is the static,
@@ -78,6 +79,16 @@ export function buildNavCatalog(): NavCatalogItem[] {
     }
   }
   return catalog;
+}
+
+/**
+ * The catalog limited to routes this install offers. Routes of switched-off product areas are
+ * dropped, and in the simple library Files is labeled Folders, since it is the main folder view.
+ */
+export function buildAvailableNavCatalog(enabled: EnabledFeatures, simpleLibrary: boolean): NavCatalogItem[] {
+  return buildNavCatalog()
+    .filter((item) => isPathEnabled(item.href, enabled))
+    .map((item) => (item.href === "/files" && simpleLibrary ? { ...item, label: "Folders" } : item));
 }
 
 /** Seeded customization: the catalog's own grouping, nothing hidden. */

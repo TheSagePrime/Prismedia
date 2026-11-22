@@ -3,6 +3,7 @@ import { browser } from "$app/environment";
 import type { LayoutLoad } from "./$types";
 import { fetchCurrentUser, fetchSetupStatusWithRetry, type AuthUser } from "$lib/api/auth";
 import { fetchSettingsValues } from "$lib/api/settings";
+import { fetchProductFeatures, type ProductFeatureSnapshot } from "$lib/api/features";
 import { settingKeys, valuesToLibrarySettings } from "$lib/settings/app-settings";
 import { readSidebarCookie } from "$lib/stores/app-chrome.svelte";
 import type { NsfwMode } from "$lib/nsfw/cookie";
@@ -73,9 +74,16 @@ export const load: LayoutLoad = async ({ url, untrack }) => {
     }
   }
 
+  // Unknown (null) shows every area, so a failed lookup never hides the user's own pages.
+  let productFeatures: ProductFeatureSnapshot | null = null;
+  if (user) {
+    productFeatures = await fetchProductFeatures().catch(() => null);
+  }
+
   return {
     initialCollapsed,
     user,
+    productFeatures,
     needsSetup,
     ...(initialNsfwMode !== undefined ? { initialNsfwMode } : {}),
   };

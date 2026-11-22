@@ -30,6 +30,9 @@
   import EntityShelf from "$lib/components/entities/EntityShelf.svelte";
   import LogoMark from "$lib/components/LogoMark.svelte";
   import PrismediaLoadingMark from "$lib/components/PrismediaLoadingMark.svelte";
+  import HomeFolderShelf from "$lib/components/files/HomeFolderShelf.svelte";
+  import { productFeatures } from "$lib/features/product-features.svelte";
+  import { isKindEnabled, isPathEnabled, videoListKinds } from "$lib/features/product-features";
 
   type SectionStatus = "pending" | "loading" | "ready";
   interface SectionDef {
@@ -46,7 +49,7 @@
     cards: EntityThumbnailCard[];
   }
 
-  const SECTION_DEFS: SectionDef[] = [
+  const ALL_SECTION_DEFS: SectionDef[] = [
     { kind: ENTITY_KIND.video, label: "Videos", icon: Film, href: "/videos" },
     { kind: ENTITY_KIND.movie, label: "Movies", icon: Clapperboard, href: "/movies" },
     { kind: ENTITY_KIND.videoSeries, label: "Series", icon: FolderOpen, href: "/series" },
@@ -59,6 +62,20 @@
     { kind: ENTITY_KIND.studio, label: "Studios", icon: Building2, href: "/studios", itemWidth: "clamp(140px, 13vw, 176px)" },
     { kind: ENTITY_KIND.tag, label: "Tags", icon: Tag, href: "/tags" },
   ];
+
+  // The simple library leads with recent photos and videos; every profile drops shelves whose
+  // product area is switched off.
+  const SECTION_DEFS: SectionDef[] = (productFeatures.simpleLibrary
+    ? [
+        ...ALL_SECTION_DEFS.filter((def) => def.kind === ENTITY_KIND.image),
+        ...ALL_SECTION_DEFS.filter((def) => def.kind === ENTITY_KIND.video),
+        ...ALL_SECTION_DEFS.filter((def) => def.kind !== ENTITY_KIND.image && def.kind !== ENTITY_KIND.video),
+      ]
+    : ALL_SECTION_DEFS
+  ).filter((def) => isKindEnabled(def.kind, productFeatures.enabled) && isPathEnabled(def.href, productFeatures.enabled))
+    .map((def) => productFeatures.simpleLibrary && (def.kind === ENTITY_KIND.image || def.kind === ENTITY_KIND.video)
+      ? { ...def, label: def.kind === ENTITY_KIND.image ? "Recent photos" : "Recent videos" }
+      : def);
 
   // Cross-kind activity rows that lead the dashboard: pick up where you left off, then what you
   // most recently finished. Both lean on the server-side engagement status + recency ordering.
@@ -137,7 +154,9 @@
   });
 
   function toCards(items: EntityCard[]): EntityThumbnailCard[] {
-    return items.map((item) => entityCardToThumbnailCard(item, resolveEntityHref(item.kind, item.id)));
+    return items
+      .filter((item) => isKindEnabled(item.kind, productFeatures.enabled))
+      .map((item) => entityCardToThumbnailCard(item, resolveEntityHref(item.kind, item.id)));
   }
 
   async function loadActivity() {
@@ -191,7 +210,8 @@
     if (index < 0) return;
 
     const read = fetchEntityShelfCached({
-      kind,
+      // Videos include movie and episode files when those pages are switched off.
+      kind: kind === ENTITY_KIND.video ? videoListKinds(productFeatures.enabled).join(",") : kind,
       sort: ENTITY_LIST_SORT.dateAdded,
       sortDirection: ENTITY_SORT_DIRECTION.descending,
       hideNsfw: nsfw.mode === "off",
@@ -372,6 +392,8 @@
         </a>
       </section>
     {/if}
+
+    <HomeFolderShelf />
 
     {#if continueRowCards.length > 0}
       <EntityShelf label="Continue" icon={PlayCircle} cards={continueRowCards} sizing="height" />
