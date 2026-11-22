@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- Files shows each folder's contents as a thumbnail grid, and every folder carries a preview from the first photo or video inside it.
+
 - Files uploads are resumable. Each file uploads on its own in small pieces, retries automatically when the connection drops, and continues from the last piece the server received, so one failure no longer loses the whole batch. A progress panel shows overall and per-file progress, speed, and time left, with cancel, retry, and retry-all-failed controls. Partial uploads stay hidden on the library disk until complete, need no extra temporary space, and are cleaned up after 24 hours without activity.
 
 - Before an upload starts, Files asks what to do when a file with the same name already exists: keep both with a numbered name, skip it, or report it as an error. The choice applies per file, so the rest of the batch continues, and the upload panel lists skipped and renamed files.

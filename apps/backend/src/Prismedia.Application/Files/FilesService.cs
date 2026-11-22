@@ -42,6 +42,7 @@ public sealed partial class FilesService(
         }
 
         entries = await ApplyExcludedFlagsAsync(directory.Root.Id, entries, cancellationToken);
+        entries = await ApplyThumbnailsAsync(directory, entries, hideNsfw, cancellationToken);
         return new FileChildrenResponse(request.RootId, directory.RelativePath, entries);
     }
 
@@ -406,6 +407,36 @@ public sealed partial class FilesService(
 
         return entries
             .Select(entry => entry with { Excluded = excluded.Contains(entry.Path) })
+            .ToArray();
+    }
+
+    /// <summary>Adds preview thumbnails to listed files and folders so the folder view can show them.</summary>
+    private async Task<IReadOnlyList<FileEntry>> ApplyThumbnailsAsync(
+        ResolvedFilePath directory,
+        IReadOnlyList<FileEntry> entries,
+        bool hideNsfw,
+        CancellationToken cancellationToken) {
+        var candidates = entries.Where(entry => !entry.Excluded).ToArray();
+        if (candidates.Length == 0) {
+            return entries;
+        }
+
+        var thumbnails = await persistence.ListThumbnailsAsync(
+            directory.AbsolutePath,
+            candidates.Select(entry => AbsolutePathForEntry(directory.Root.Path, entry.Path)).ToArray(),
+            hideNsfw,
+            cancellationToken);
+        if (thumbnails.Count == 0) {
+            return entries;
+        }
+
+        return entries
+            .Select(entry => entry.Excluded
+                ? entry
+                : entry with {
+                    ThumbnailUrl = thumbnails.GetValueOrDefault(
+                        Path.TrimEndingDirectorySeparator(AbsolutePathForEntry(directory.Root.Path, entry.Path)))
+                })
             .ToArray();
     }
 

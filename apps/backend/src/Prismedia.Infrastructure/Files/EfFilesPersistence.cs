@@ -1,3 +1,4 @@
+using Prismedia.Infrastructure.Entities;
 using Microsoft.EntityFrameworkCore;
 using Prismedia.Application.Files;
 using Prismedia.Contracts.Files;
@@ -140,6 +141,82 @@ public sealed class EfFilesPersistence(PrismediaDbContext db) : IFilesPersistenc
         }
 
         return hidden;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<string, string>> ListThumbnailsAsync(
+        string scopeDirectory,
+        IReadOnlyList<string> absolutePaths,
+        bool hideNsfw,
+        CancellationToken cancellationToken) {
+        var thumbnails = new Dictionary<string, string>(FileSystemPathComparison.Comparer);
+        if (absolutePaths.Count == 0) {
+            return thumbnails;
+        }
+
+        // Same narrow projection as the visibility lookup: containment is decided in memory with the
+        // host's path comparer, bounded to sources inside the listed folder.
+        var scope = Path.TrimEndingDirectorySeparator(Path.GetFullPath(scopeDirectory));
+        var sources = (await db.EntityFiles.AsNoTracking()
+            .Where(file => file.Role == EntityFileRole.Source)
+            .Join(
+                db.Entities.AsNoTracking(),
+                file => file.EntityId,
+                entity => entity.Id,
+                (file, entity) => new { file.Path, file.EntityId, entity.IsNsfw })
+            .ToArrayAsync(cancellationToken))
+            .Where(source => !(hideNsfw && source.IsNsfw) &&
+                             FileSystemPathComparison.IsSameOrDescendant(scope, source.Path))
+            .OrderBy(source => source.Path, FileSystemPathComparison.Comparer)
+            .ToArray();
+        if (sources.Length == 0) {
+            return thumbnails;
+        }
+
+        // A file shows its own media's thumbnail; a folder shows the first media inside it (by path)
+        // that already has one. A few candidates per entry cover media whose thumbnail is pending.
+        const int candidatesPerEntry = 8;
+        var candidatesByPath = absolutePaths
+            .Select(path => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)))
+            .Distinct(FileSystemPathComparison.Comparer)
+            .ToDictionary(
+                path => path,
+                path => sources
+                    .Where(source => FileSystemPathComparison.IsSameOrDescendant(path, source.Path))
+                    .Select(source => source.EntityId)
+                    .Distinct()
+                    .Take(candidatesPerEntry)
+                    .ToArray(),
+                FileSystemPathComparison.Comparer);
+        var entityIds = candidatesByPath.Values.SelectMany(ids => ids).Distinct().ToArray();
+        if (entityIds.Length == 0) {
+            return thumbnails;
+        }
+
+        var artwork = await db.EntityFiles.AsNoTracking()
+            .Where(file => entityIds.Contains(file.EntityId) && (
+                file.Role == EntityFileRole.GridThumbnail ||
+                file.Role == EntityFileRole.Thumbnail ||
+                file.Role == EntityFileRole.Poster ||
+                file.Role == EntityFileRole.Cover ||
+                file.Role == EntityFileRole.Backdrop))
+            .ToArrayAsync(cancellationToken);
+        var thumbnailByEntity = artwork
+            .GroupBy(file => file.EntityId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.FirstOrDefault(file => file.Role == EntityFileRole.GridThumbnail)?.Path ??
+                         EntityCoverSelection.Select(group.ToArray())?.Path);
+        foreach (var (path, ids) in candidatesByPath) {
+            var thumbnail = ids
+                .Select(id => thumbnailByEntity.GetValueOrDefault(id))
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+            if (thumbnail is not null) {
+                thumbnails[path] = thumbnail;
+            }
+        }
+
+        return thumbnails;
     }
 
     /// <inheritdoc />

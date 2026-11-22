@@ -54,6 +54,36 @@ public sealed class EfFilesPersistenceTests {
     }
 
     [Fact]
+    public async Task ListThumbnailsAsyncLendsMediaArtworkToFilesAndTheirFolders() {
+        await using var db = CreateContext();
+        var rootPath = Path.GetFullPath("/media/photos");
+        var tripPath = Path.Combine(rootPath, "Trip");
+        var pendingPath = Path.Combine(tripPath, "a-pending.jpg");
+        var beachPath = Path.Combine(tripPath, "b-beach.jpg");
+        var privatePath = Path.Combine(rootPath, "Private", "secret.jpg");
+        var notesPath = Path.Combine(rootPath, "notes.txt");
+        await AddSourceEntityAsync(db, EntityKind.Image.ToCode(), "pending", pendingPath, isNsfw: false);
+        var beachId = await AddSourceEntityAsync(db, EntityKind.Image.ToCode(), "beach", beachPath, isNsfw: false);
+        var privateId = await AddSourceEntityAsync(db, EntityKind.Image.ToCode(), "secret", privatePath, isNsfw: true);
+        AddArtwork(db, beachId, EntityFileRole.Thumbnail, "/assets/beach-full.jpg");
+        AddArtwork(db, beachId, EntityFileRole.GridThumbnail, "/assets/beach-grid.jpg");
+        AddArtwork(db, privateId, EntityFileRole.Thumbnail, "/assets/secret.jpg");
+        await db.SaveChangesAsync();
+        var persistence = new EfFilesPersistence(db);
+        string[] candidates = [tripPath, beachPath, pendingPath, Path.Combine(rootPath, "Private"), notesPath];
+
+        var visible = await persistence.ListThumbnailsAsync(rootPath, candidates, hideNsfw: true, CancellationToken.None);
+        var all = await persistence.ListThumbnailsAsync(rootPath, candidates, hideNsfw: false, CancellationToken.None);
+
+        Assert.Equal("/assets/beach-grid.jpg", visible[tripPath]);
+        Assert.Equal("/assets/beach-grid.jpg", visible[beachPath]);
+        Assert.False(visible.ContainsKey(pendingPath));
+        Assert.False(visible.ContainsKey(Path.Combine(rootPath, "Private")));
+        Assert.False(visible.ContainsKey(notesPath));
+        Assert.Equal("/assets/secret.jpg", all[Path.Combine(rootPath, "Private")]);
+    }
+
+    [Fact]
     public async Task ExclusionsAreScopedToLibraryRootAndCoverDescendants() {
         await using var db = CreateContext();
         var otherRootId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
@@ -198,7 +228,19 @@ public sealed class EfFilesPersistenceTests {
         Assert.Equal(targetFolder, Assert.Single(db.EntitySources).Value);
     }
 
-    private static async Task AddSourceEntityAsync(
+    private static void AddArtwork(PrismediaDbContext db, Guid entityId, EntityFileRole role, string path) {
+        var now = DateTimeOffset.UtcNow;
+        db.EntityFiles.Add(new EntityFileRow {
+            Id = Guid.NewGuid(),
+            EntityId = entityId,
+            Role = role,
+            Path = path,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+    }
+
+    private static async Task<Guid> AddSourceEntityAsync(
         PrismediaDbContext db,
         string kindCode,
         string title,
@@ -223,6 +265,7 @@ public sealed class EfFilesPersistenceTests {
             UpdatedAt = now
         });
         await db.SaveChangesAsync();
+        return entityId;
     }
 
     private static void SeedLibraryRoot(PrismediaDbContext db, Guid id, string path) {
