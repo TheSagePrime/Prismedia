@@ -1,9 +1,37 @@
 import { describe, expect, it } from "vitest";
 import type { EntityKind } from "$lib/api/generated/model";
 import type { EntityCard, EntityListResponse } from "$lib/api/entities";
-import { firstSearchResult, flattenSearchResults, searchEntities } from "./entity-search";
+import { afterEach } from "vitest";
+import { availableSearchKinds, firstSearchResult, flattenSearchResults, searchEntities } from "./entity-search";
+import { productFeatures } from "$lib/features/product-features.svelte";
 
 const emptyPage: EntityListResponse = { items: [], nextCursor: null, totalCount: 0 };
+
+describe("searchEntities in the simple library", () => {
+  afterEach(() => productFeatures.set(null));
+
+  it("drops hidden kinds and lists movie and episode files as videos", async () => {
+    productFeatures.set({ profile: "simple", enabled: [] });
+    const response = await searchEntities({
+      query: "beach",
+      includeRelated: false,
+      fetcher: async () => page([
+        entity("movie-1", "movie", "Beach day"),
+        entity("book-1", "book", "Beach reads"),
+        entity("image-1", "image", "Beach sunset"),
+      ]),
+    });
+
+    const items = flattenSearchResults(response);
+    expect(items.map((item) => [item.title, item.kind, item.href])).toEqual([
+      ["Beach day", "video", "/videos/movie-1"],
+      ["Beach sunset", "image", "/images/image-1"],
+    ]);
+    expect(availableSearchKinds()).not.toContain("movie");
+    expect(availableSearchKinds()).not.toContain("book");
+    expect(availableSearchKinds()).toContain("video");
+  });
+});
 
 describe("searchEntities", () => {
   it("returns direct matches before incoming relationship matches", async () => {

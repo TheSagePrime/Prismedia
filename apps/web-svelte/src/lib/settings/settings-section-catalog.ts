@@ -14,6 +14,8 @@ import {
   Wrench,
 } from "@lucide/svelte";
 import { PRISM_MATERIAL_SPECTRUM } from "$lib/entities/entity-accent";
+import { productFeatures } from "$lib/features/product-features.svelte";
+import { isPathEnabled } from "$lib/features/product-features";
 
 export const SETTING_SECTION = {
   libraries: "libraries",
@@ -159,6 +161,8 @@ export function settingsSectionById(id: string | null | undefined): SettingsSect
 export function visibleSettingsSections(session: { canManageServer: boolean; isAdmin: boolean }): SettingsSection[] {
   if (!session.canManageServer) return [];
   return settingsSections.filter((section) => {
+    // Sections of switched-off product areas (acquisition, connections, auto identify) are hidden.
+    if (!isPathEnabled(section.href, productFeatures.enabled)) return false;
     if (section.access === SETTINGS_SECTION_ACCESS.admin) return session.isAdmin;
     return true;
   });

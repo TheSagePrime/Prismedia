@@ -87,6 +87,13 @@ public sealed class FilesVisibilityTests {
             new LocalFileUploadStaging(new TestFileMutationGuard()));
 
     private sealed class FakeFilesPersistence(IReadOnlySet<string> hiddenPaths) : IFilesPersistence {
+        public Task<IReadOnlyDictionary<string, string>> ListThumbnailsAsync(
+            string scopeDirectory,
+            IReadOnlyList<string> absolutePaths,
+            bool hideNsfw,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>());
+
         public Task<IReadOnlyList<FileLibraryRoot>> ListRootsAsync(CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<FileLibraryRoot>>([
                 new(SafeRootId, "/media/safe", "Safe", true, true, false, false, false, false),

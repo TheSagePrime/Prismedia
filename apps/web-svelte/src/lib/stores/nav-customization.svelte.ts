@@ -1,7 +1,7 @@
 import { browser } from "$app/environment";
 import { createContext } from "$lib/utils/context";
 import {
-  buildNavCatalog,
+  buildAvailableNavCatalog,
   defaultNavPrefs,
   resolveFavorites,
   resolveNav,
@@ -13,6 +13,7 @@ import {
 } from "$lib/nav/nav-catalog";
 import { fetchNavLayout, saveNavLayout } from "$lib/api/nav-layout";
 import { colors } from "@prismedia/ui-svelte";
+import { productFeatures } from "$lib/features/product-features.svelte";
 
 const ctx = createContext<NavCustomizationStore>("NavCustomization");
 
@@ -43,14 +44,24 @@ function uniqueSectionId(existing: NavPrefs["sections"], label: string): string 
  * the server on boot via {@link hydrateFromServer}.
  */
 export class NavCustomizationStore {
-  /** Static, code-owned catalog of all known routes. */
-  readonly catalog: NavCatalogItem[] = buildNavCatalog();
+  /**
+   * Code-owned catalog of the routes this install offers. Routes of switched-off product areas are
+   * left out, which removes them from the sidebar, mobile bar, More sheet, and editor alike.
+   */
+  catalog = $derived<NavCatalogItem[]>(
+    buildAvailableNavCatalog(productFeatures.enabled, productFeatures.simpleLibrary),
+  );
 
   prefs = $state<NavPrefs>(defaultNavPrefs());
   editing = $state(false);
 
-  /** Sections resolved for rendering (includes hidden items, flagged). */
-  resolvedSections = $derived<ResolvedNavSection[]>(resolveNav(this.catalog, this.prefs));
+  /**
+   * Sections resolved for rendering (includes hidden items, flagged). Sections left empty because
+   * their routes are switched off are dropped outside edit mode.
+   */
+  resolvedSections = $derived<ResolvedNavSection[]>(
+    resolveNav(this.catalog, this.prefs).filter((section) => this.editing || section.items.length > 0),
+  );
   /** Up to four visible items for the mobile bottom bar. */
   resolvedFavorites = $derived<ResolvedNavItem[]>(
     resolveFavorites(this.catalog, this.prefs, this.resolvedSections),

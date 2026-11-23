@@ -8,8 +8,8 @@
   import StarRatingPicker from "$lib/components/StarRatingPicker.svelte";
   import { buildHrefWithFrom } from "$lib/back-navigation";
   import { useNsfw } from "$lib/nsfw/store.svelte";
-  import { ALL_SEARCH_KINDS, type SearchEntityKind, type SearchResponse } from "$lib/search/models";
-  import { firstSearchResult, loadMoreSearchResults, searchEntities } from "$lib/search/entity-search";
+  import type { SearchEntityKind, SearchResponse } from "$lib/search/models";
+  import { availableSearchKinds, firstSearchResult, loadMoreSearchResults, searchEntities } from "$lib/search/entity-search";
   import { entityAccentForKind } from "$lib/entities/entity-accent";
   import { SEARCH_KIND_CONFIG } from "$lib/components/search-kind-config";
 
@@ -31,11 +31,12 @@
 
   function initialKinds(): SearchEntityKind[] {
     const raw = page.url.searchParams.get("kinds")?.split(",") ?? [];
-    const parsed = ALL_SEARCH_KINDS.filter(kind => raw.includes(kind));
-    return parsed.length ? parsed : [...ALL_SEARCH_KINDS];
+    const available = availableSearchKinds();
+    const parsed = available.filter(kind => raw.includes(kind));
+    return parsed.length ? parsed : [...available];
   }
 
-  const kindChoices = ALL_SEARCH_KINDS.map(kind => ({ value: kind, label: SEARCH_KIND_CONFIG[kind].label, icon: SEARCH_KIND_CONFIG[kind].icon, iconColor: entityAccentForKind(kind).primary }));
+  const kindChoices = availableSearchKinds().map(kind => ({ value: kind, label: SEARCH_KIND_CONFIG[kind].label, icon: SEARCH_KIND_CONFIG[kind].icon, iconColor: entityAccentForKind(kind).primary }));
   const hasQuery = $derived(query.trim().length >= 2);
   const filtered = $derived(results ? {
     ...results,
@@ -45,7 +46,7 @@
     }).filter(group => group.items.length > 0),
   } : null);
   const topResult = $derived(firstSearchResult(filtered));
-  const hasFilters = $derived(minRating != null || activeKinds.length !== ALL_SEARCH_KINDS.length);
+  const hasFilters = $derived(minRating != null || activeKinds.length !== availableSearchKinds().length);
 
   // Search is the page's primary task. Preserve focus while updating the URL.
   $effect(() => { inputRef?.focus(); });
@@ -55,7 +56,7 @@
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams();
       if (q) params.set("q", q);
-      if (kinds.length < ALL_SEARCH_KINDS.length) params.set("kinds", kinds.join(","));
+      if (kinds.length < availableSearchKinds().length) params.set("kinds", kinds.join(","));
       const qs = params.toString();
       void goto(`/search${qs ? `?${qs}` : ""}`, { replaceState: true, keepFocus: true, noScroll: true });
     }, 400);
@@ -90,7 +91,7 @@
 
   function clearFilters() {
     minRating = null;
-    activeKinds = [...ALL_SEARCH_KINDS];
+    activeKinds = [...availableSearchKinds()];
   }
 
   async function loadMore() {

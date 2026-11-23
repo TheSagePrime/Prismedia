@@ -97,6 +97,19 @@ public interface IFilesPersistence {
         IReadOnlyList<string> absolutePaths,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Returns a thumbnail path for each candidate that has one: a file's own media thumbnail, or for
+    /// a folder the thumbnail of the first media inside it. Candidates without artwork are omitted.
+    /// </summary>
+    /// <param name="scopeDirectory">Folder being listed; every candidate lives within it.</param>
+    /// <param name="absolutePaths">Candidate absolute paths.</param>
+    /// <param name="hideNsfw">Whether NSFW media may not lend its thumbnail.</param>
+    Task<IReadOnlyDictionary<string, string>> ListThumbnailsAsync(
+        string scopeDirectory,
+        IReadOnlyList<string> absolutePaths,
+        bool hideNsfw,
+        CancellationToken cancellationToken);
+
     /// <summary>Returns the requested root-relative paths covered by scan exclusions.</summary>
     Task<IReadOnlySet<string>> ListExcludedRelativePathsAsync(
         Guid rootId,

@@ -13,6 +13,8 @@ declare global {
       initialNsfwMode?: NsfwMode;
       user?: AuthUser | null;
       needsSetup?: boolean;
+      /** Feature profile and optional areas this install runs; null when unknown (everything shown). */
+      productFeatures?: import("$lib/api/features").ProductFeatureSnapshot | null;
     }
     // interface PageState {}
     // interface Platform {}

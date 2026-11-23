@@ -1,3 +1,5 @@
+import { productFeatures } from "$lib/features/product-features.svelte";
+import { isPlainVideoKind } from "$lib/features/product-features";
 import {
   CAPABILITY_KIND,
   CREDIT_ROLE,
@@ -112,7 +114,9 @@ export function resolveEntityHref(
   parent?: EntityRouteContext,
 ): string | undefined {
   if (!isEntityKindCode(kind)) return undefined;
-  const navigation = ENTITY_KIND_DEFINITIONS[kind].navigation;
+  // With movies and series switched off, movie and episode files open on the plain video page.
+  const routeKind: EntityKindCode = isPlainVideoKind(kind, productFeatures.enabled) ? ENTITY_KIND.video : kind;
+  const navigation = ENTITY_KIND_DEFINITIONS[routeKind].navigation;
   const template = navigation?.detailPathTemplate;
   if (!template) return undefined;
   if (navigation.requiredAncestorKind && !parent) {

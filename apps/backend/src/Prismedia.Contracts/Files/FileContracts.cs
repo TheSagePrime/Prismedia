@@ -22,6 +22,10 @@ public sealed record FileRoot(Guid Id, string Label, string Path, bool Enabled, 
 /// <param name="MimeType">Detected content type for files.</param>
 /// <param name="ModifiedAt">Last modification timestamp when known.</param>
 /// <param name="Excluded">Whether this path is excluded from library scans.</param>
+/// <param name="ThumbnailUrl">
+/// Preview artwork when known: a photo's or video's own thumbnail, or for a folder the thumbnail of
+/// the first photo or video inside it. Null until thumbnails are generated or for non-media files.
+/// </param>
 public sealed record FileEntry(
     Guid RootId,
     string Path,
@@ -30,7 +34,8 @@ public sealed record FileEntry(
     long? SizeBytes,
     string? MimeType,
     DateTimeOffset? ModifiedAt,
-    bool Excluded = false);
+    bool Excluded = false,
+    string? ThumbnailUrl = null);
 
 /// <summary>
 /// Files page root list response.

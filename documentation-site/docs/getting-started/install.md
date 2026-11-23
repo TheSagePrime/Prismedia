@@ -77,6 +77,7 @@ Most installs need **no** environment variables. The container generates everyth
 | `PRISMEDIA_RECOVERY_PASSWORD` | Unset | Locked out? Set to reset (or create) an enabled administrator's password on boot, sign back in, then unset. See [Password recovery](../deployment/authentication.md#password-recovery). |
 | `PRISMEDIA_RECOVERY_USERNAME` | `admin` | The account `PRISMEDIA_RECOVERY_PASSWORD` resets or creates. |
 | `PRISMEDIA_TRUSTED_PROXIES` | Unset | Comma-separated IPs or CIDR ranges of reverse proxies whose `X-Forwarded-For`/`X-Forwarded-Proto` headers Prismedia trusts. See [Reverse Proxy](../deployment/reverse-proxy.md#forward-standard-headers). |
+| `PRISMEDIA_FEATURE_PROFILE` | `simple` | Which parts of Prismedia run. `simple` is a private photo and video library: folders with thumbnails, images, videos, people, tags, and collections, with movies, series, music, books, studios, calendar, requests and downloads, plugins, Identify, stats, and developer pages hidden and their background work stopped. `full` turns everything on. Switching never deletes data. See [Simple library](../using/browsing.md#simple-library). |
 | `ASPNETCORE_URLS` | `http://0.0.0.0:8008` | Override the in-container listen address/port. |
 | `PRISMEDIA_HLS_TRANSCODER` | `auto` | Force a transcoder profile (`auto`, `software`, hardware encoders). See [HLS Streaming](../developers/hls-streaming.md). |
 | `PRISMEDIA_VAAPI_DEVICE` | `/dev/dri/renderD128` | VAAPI render node for hardware transcoding. |

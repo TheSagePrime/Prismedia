@@ -40,6 +40,22 @@ public sealed partial class FilesServiceTests : IDisposable {
     }
 
     [Fact]
+    public async Task ListChildrenAddsThumbnailsForMediaFilesAndFolders() {
+        Directory.CreateDirectory(Path.Combine(_tempRoot.FullName, "Trip"));
+        await File.WriteAllTextAsync(Path.Combine(_tempRoot.FullName, "beach.jpg"), "jpg");
+        await File.WriteAllTextAsync(Path.Combine(_tempRoot.FullName, "notes.txt"), "txt");
+        Persistence.Thumbnails[Path.Combine(_tempRoot.FullName, "Trip")] = "/assets/trip.jpg";
+        Persistence.Thumbnails[Path.Combine(_tempRoot.FullName, "beach.jpg")] = "/assets/beach.jpg";
+        var service = CreateService();
+
+        var response = await service.ListChildrenAsync(new FileChildrenRequest(_rootId, ""), false, CancellationToken.None);
+
+        Assert.Equal(
+            [("Trip", "/assets/trip.jpg"), ("beach.jpg", "/assets/beach.jpg"), ("notes.txt", null)],
+            response.Entries.Select(entry => (entry.Name, entry.ThumbnailUrl)).ToArray());
+    }
+
+    [Fact]
     public async Task DetailRejectsTraversalOutsideLibraryRoot() {
         var service = CreateService();
 
@@ -519,6 +535,17 @@ public sealed partial class FilesServiceTests : IDisposable {
     }
 
     private sealed class RecordingFilesPersistence : IFilesPersistence {
+        public Dictionary<string, string> Thumbnails { get; } = new(StringComparer.Ordinal);
+
+        public Task<IReadOnlyDictionary<string, string>> ListThumbnailsAsync(
+            string scopeDirectory,
+            IReadOnlyList<string> absolutePaths,
+            bool hideNsfw,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<string, string>>(absolutePaths
+                .Where(Thumbnails.ContainsKey)
+                .ToDictionary(path => path, path => Thumbnails[path]));
+
         public Dictionary<Guid, FileLibraryRoot> Roots { get; } = new();
         public List<(string SourcePath, string TargetPath)> Rewrites { get; } = [];
         public HashSet<string> ExcludedPaths { get; } = new(StringComparer.OrdinalIgnoreCase);

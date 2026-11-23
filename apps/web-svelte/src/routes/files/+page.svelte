@@ -4,6 +4,7 @@
   import { page } from "$app/state";
   import FileDetailPane from "$lib/components/files/FileDetailPane.svelte";
   import FileDownloadStatus from "$lib/components/files/FileDownloadStatus.svelte";
+  import FileDropOverlay from "$lib/components/files/FileDropOverlay.svelte";
   import FileMoveDialog from "$lib/components/files/FileMoveDialog.svelte";
   import FileTreePane from "$lib/components/files/FileTreePane.svelte";
   import FileUploadDialog from "$lib/components/files/FileUploadDialog.svelte";
@@ -26,6 +27,7 @@
     rescanFileRoot as apiRescanFileRoot,
     createFileUploadTransport,
     type FileDetail,
+    type FileEntry,
     type FileRoot,
     type FileUploadItem,
   } from "$lib/api/files";
@@ -38,6 +40,7 @@
   import { fileContextActions, type FileActionId } from "$lib/files/file-actions";
   import {
     createFileTreeRegistry,
+    fileTreeEntryPath,
     fileTreeRootPath,
     reconcileFileTreeEntries,
     type FileTreeNodeMeta,
@@ -169,17 +172,42 @@
     }
   }
 
+  /** Folder that receives dropped files: the selected folder, the selected file's folder, or the first root. */
+  const dropTarget = $derived(directoryTarget(selectedMeta));
+
+  /** Entries of the selected folder, with preview thumbnails, for the detail pane's folder grid. */
+  let folderEntries = $state<FileEntry[]>([]);
+
   async function loadDetail(meta: FileTreeNodeMeta): Promise<void> {
     loadingDetail = true;
     error = null;
+    if (meta.kind !== FILE_ENTRY_KIND.directory) folderEntries = [];
     try {
-      detail = await fetchFileDetail(meta.rootId, meta.path);
+      const [nextDetail, children] = await Promise.all([
+        fetchFileDetail(meta.rootId, meta.path),
+        meta.kind === FILE_ENTRY_KIND.directory
+          ? fetchFileChildren(meta.rootId, meta.path).then((response) => response.entries).catch(() => [])
+          : Promise.resolve([]),
+      ]);
+      detail = nextDetail;
+      folderEntries = children;
     } catch (loadError) {
       detail = null;
       error = loadError instanceof Error ? loadError.message : "Failed to load file details";
     } finally {
       loadingDetail = false;
     }
+  }
+
+  /** Opens a folder-grid entry: selects it in the tree, loading its parent folder first if needed. */
+  async function openFolderEntry(entry: FileEntry): Promise<void> {
+    const root = roots.find((candidate) => candidate.id === entry.rootId);
+    const parent = selectedMeta?.kind === FILE_ENTRY_KIND.directory ? selectedMeta : null;
+    if (!root) return;
+    if (parent) await loadChildren(parent);
+    const treePath = fileTreeEntryPath(`${fileTreeRootPath(root, roots)}/`, entry) +
+      (entry.kind === FILE_ENTRY_KIND.directory ? "/" : "");
+    await selectTreePath(treePath);
   }
 
   async function selectTreePath(treePath: string, options: { replaceUrl?: boolean; showDetail?: boolean } = {}): Promise<void> {
@@ -479,6 +507,30 @@
     pendingUpload = { items, target };
   }
 
+  /** Whether dropped folders are still being read before their files join the queue. */
+  let preparingDrop = $state(false);
+
+  /**
+   * Drops go straight into the upload queue with the remembered duplicate-name choice, so the
+   * progress panel appears at once; the picker buttons still ask first.
+   */
+  async function handleExternalDrop(dataTransfer: DataTransfer | null): Promise<void> {
+    const target = directoryTarget(selectedMeta);
+    if (!target) return;
+    if (target.isReadOnly) { error = "This library is managed by the connected application and is read-only."; return; }
+    preparingDrop = true;
+    try {
+      const items = await collectDroppedFiles(dataTransfer);
+      if (items.length > 0) {
+        uploads.add(items, { rootId: target.rootId, targetPath: target.path, conflictPolicy });
+      }
+    } catch (dropError) {
+      error = dropError instanceof Error ? dropError.message : "The dropped files could not be read.";
+    } finally {
+      preparingDrop = false;
+    }
+  }
+
   function startPendingUpload(): void {
     const pending = pendingUpload;
     pendingUpload = null;
@@ -634,11 +686,6 @@
     };
   }
 
-  async function handleExternalDrop(dataTransfer: DataTransfer | null): Promise<void> {
-    const target = directoryTarget(selectedMeta);
-    uploadItems(await collectDroppedFiles(dataTransfer), target ?? undefined);
-  }
-
   $effect(() => {
     if (roots.length === 0) return;
     const rootId = page.url.searchParams.get("rootId");
@@ -757,7 +804,8 @@
     onRefresh={() => void refreshSelected()}
     onAction={(action) => void handleAction(action)}
     {canPickFolders}
-    onExternalDrop={(dataTransfer) => void handleExternalDrop(dataTransfer)}
+    {folderEntries}
+    onOpenEntry={(entry) => void openFolderEntry(entry)}
   />
 
   <input
@@ -793,9 +841,16 @@
   {/if}
 </main>
 
-{#if uploadSnapshot && uploadSnapshot.items.length > 0}
+<FileDropOverlay
+  targetName={dropTarget?.name ?? null}
+  readOnly={Boolean(dropTarget?.isReadOnly)}
+  onDrop={(dataTransfer) => void handleExternalDrop(dataTransfer)}
+/>
+
+{#if (uploadSnapshot && uploadSnapshot.items.length > 0) || preparingDrop}
   <FileUploadPanel
-    snapshot={uploadSnapshot}
+    snapshot={uploadSnapshot ?? uploads.snapshot()}
+    preparing={preparingDrop}
     onCancel={(id) => uploads.cancel(id)}
     onCancelAll={() => uploads.cancelAll()}
     onRetry={(id) => uploads.retry(id)}

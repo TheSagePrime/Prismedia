@@ -2026,6 +2026,13 @@ public sealed class MediaEntityDeletionServiceTests {
         new(new DbContextOptionsBuilder<PrismediaDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
 
     private sealed class FakeRoots(params FileLibraryRoot[] roots) : IFilesPersistence {
+        public Task<IReadOnlyDictionary<string, string>> ListThumbnailsAsync(
+            string scopeDirectory,
+            IReadOnlyList<string> absolutePaths,
+            bool hideNsfw,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>());
+
         public Task<IReadOnlyList<FileLibraryRoot>> ListRootsAsync(CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<FileLibraryRoot>>(roots);
         public Task<FileLibraryRoot?> GetRootAsync(Guid rootId, CancellationToken cancellationToken) =>

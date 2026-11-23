@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Prismedia.Application.Books;
 using Prismedia.Application.Entities;
 using Prismedia.Application.Audio;
+using Prismedia.Application.Features;
 using Prismedia.Application.Files;
 using Prismedia.Application.Integrations;
 using Prismedia.Application.Jobs;
@@ -145,13 +146,13 @@ public static class DependencyInjection {
         services.AddHostedService<JobScheduler>();
         services.AddHostedService<JobHistoryPruner>();
         services.AddHostedService<EntityLifecycleRecoveryWorker>();
-        services.AddHostedService<MonitoredSearchWorker>();
+        services.AddFeatureGatedHostedService<MonitoredSearchWorker>(ProductFeature.Acquisition);
         services.AddHostedService<LibraryFileChangeMonitor>();
         services.AddHostedService<Files.FileUploadSessionPruner>();
         services.AddHostedService<EntityAvailabilityReconciliationWorker>();
-        services.AddHostedService<ManagedLibraryTrackingWorker>();
+        services.AddFeatureGatedHostedService<ManagedLibraryTrackingWorker>(ProductFeature.Acquisition);
         services.AddSingleton<Integrations.ConnectionRevalidationService>();
-        services.AddHostedService<ConnectionRevalidationWorker>();
+        services.AddFeatureGatedHostedService<ConnectionRevalidationWorker>(ProductFeature.Acquisition);
         services.AddHostedService<EntityAssetRowSweepWorker>();
         services.AddHostedService<IntegrationArtifactCleanupWorker>();
 

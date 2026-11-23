@@ -180,6 +180,13 @@ public sealed class FilesEndpointTests : IDisposable {
             .WithTestAuth(allowNsfw: allowNsfw);
 
     private sealed class FakeFilesPersistence(string rootPath) : IFilesPersistence {
+        public Task<IReadOnlyDictionary<string, string>> ListThumbnailsAsync(
+            string scopeDirectory,
+            IReadOnlyList<string> absolutePaths,
+            bool hideNsfw,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>());
+
         public Task<IReadOnlyList<FileLibraryRoot>> ListRootsAsync(CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<FileLibraryRoot>>([Root(), Root(NsfwRootId, isNsfw: true)]);
 

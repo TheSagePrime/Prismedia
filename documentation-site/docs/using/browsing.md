@@ -61,6 +61,18 @@ Collections are simple groupings for browsing and curation — manual, dynamic (
 
 <DocScreenshot src="/img/screenshots/collections.webp" alt="A collection detail page showing a curated set of music." width={2430} height={1920} />
 
+## Simple library
+
+By default Prismedia runs as a simple, private photo and video library (`PRISMEDIA_FEATURE_PROFILE=simple`). You get:
+
+- **Folders** — your library folders exactly as they are on disk, each with a thumbnail from the photos or videos inside it. The home page starts with your folders, then your most recent photos and videos.
+- **Images** and **Videos** — plain photos and videos. Videos that Prismedia filed as movies or TV episodes (for example a single video inside its own folder) are listed and played as ordinary videos.
+- **People**, **Tags**, and **Collections**, plus search, settings, uploads, and jobs.
+
+Movies, series, music, books and comics, studios, the calendar, requests and downloads, plugins and scrapers, Identify, stats, and developer pages are hidden from navigation, the home page, and search. Their background work stops too: no automatic identification, metadata or subtitle downloads, plugin updates, or download-manager checks. An old link to a hidden page shows a short "not available" message.
+
+Nothing is deleted. To bring everything back, set `PRISMEDIA_FEATURE_PROFILE=full` and restart Prismedia.
+
 ## Files
 
 The **Files** workspace is the file manager for watched roots.
@@ -76,17 +88,17 @@ From Files you can:
 - Exclude paths from future scans and remove exclusions later.
 - Delete files or folders when the media mount is writable.
 
-Files opens with folders collapsed. Use Browse for media metadata; use Files for source-folder control.
+Files opens with folders collapsed. Selecting a folder shows its contents as a thumbnail grid; tap a tile to open it. Use Browse for media metadata; use Files for source-folder control.
 
 ### Uploading files
 
-Choose a folder, then drop files or folders onto the details pane, or use the upload buttons. Before anything is sent, Files asks what to do when a file with the same name already exists in the destination:
+Choose a folder, then drag files or folders from your computer anywhere onto the Files page: a large overlay shows which folder will receive them, and the upload panel appears as soon as you drop. Dropped files use your last duplicate-name choice. With the upload buttons, Files first asks what to do when a file with the same name already exists in the destination:
 
 - **Keep both** keeps the existing file and saves the new one with a number, such as `photo (1).jpg`.
 - **Skip** keeps the existing file and does not upload the new one.
 - **Report as error** keeps the existing file and marks the new one as failed.
 
-The choice applies to the whole batch and is remembered for next time. Other files keep uploading either way, and the upload panel lists which files were skipped or renamed.
+The choice applies to the whole batch and is remembered for next time, including for dropped files. Other files keep uploading either way, and the upload panel lists which files were skipped or renamed.
 
 Each file uploads separately, in pieces of a few megabytes. If the connection drops — for example when a VPN reconnects — the upload pauses, retries on its own, and continues from the last piece the server received instead of starting over. Files that still fail after several retries are marked failed; **Retry** continues them from where they stopped. The upload panel shows overall and per-file progress, speed, and time left, and any file can be cancelled. Keep the page open until uploads finish; leaving the page cancels uploads that have not finished.
 

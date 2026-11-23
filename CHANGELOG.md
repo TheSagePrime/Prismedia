@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Docs
 
+- Documented the simple library profile and `PRISMEDIA_FEATURE_PROFILE`, the Files folder grid, and dropping files anywhere on the Files page.
+
 - Documented resumable Files uploads, the conflict choice, multi-select moves and deletes, the disk space uploads need, uploading from iPhone, and the server cost of playing HEVC iPhone videos in browsers that cannot decode them.
 
 - Documented connecting Suwayomi OPDS catalogs to browse and import already downloaded CBZ chapters, including authentication and reading-progress settings.
@@ -15,6 +17,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Documented the executor protocol for durable jobs, sealed output manifests, retained artifacts, and independently retryable import acknowledgements.
 
 ### Added
+
+- Dragging files or folders from your computer anywhere over the Files page shows a clear overlay naming the folder that will receive them (or explaining that a library is read-only). Dropping starts the upload straight away with your last duplicate-name choice, and the upload panel appears immediately, even while large folders are still being read.
+
+- A simple library profile, on by default (`PRISMEDIA_FEATURE_PROFILE=simple`), keeps Prismedia to a private photo and video library: folders, images, videos, people, tags, and collections. Movies, series, music, books, studios, the calendar, requests and downloads, plugins, Identify, stats, and developer pages are hidden, and their background work (automatic identification, metadata and subtitle downloads, plugin updates, download-manager checks) stops. No data is removed; `PRISMEDIA_FEATURE_PROFILE=full` turns everything back on.
+
+- Files shows each folder's contents as a thumbnail grid, and every folder carries a preview from the first photo or video inside it.
 
 - Files uploads are resumable. Each file uploads on its own in small pieces, retries automatically when the connection drops, and continues from the last piece the server received, so one failure no longer loses the whole batch. A progress panel shows overall and per-file progress, speed, and time left, with cancel, retry, and retry-all-failed controls. Partial uploads stay hidden on the library disk until complete, need no extra temporary space, and are cleaned up after 24 hours without activity.
 
